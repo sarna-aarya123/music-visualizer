@@ -3,9 +3,10 @@ import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { SceneProps } from '../types';
 import type { AudioFeatureFrame } from '../../audio/types';
-import { consumeBeat, createBeatConsumerState } from '../../audio/beatConsumer';
+import { consumeBeat, consumeEvent, consumeSnareHit, createBeatConsumerState } from '../../audio/beatConsumer';
 import { cameraMotionState } from './world/cameraMotionState';
 import { MAX_SPEED_CAP } from './world/musicController';
+import { majorEventState } from './world/musicEventDirector';
 
 const AMBIENT_COUNT = 260;
 const AMBIENT_HEIGHT_RANGE = 34;
@@ -22,6 +23,8 @@ function AmbientMotes({ featureFrame }: { featureFrame: AudioFeatureFrame }) {
   const speedsRef = useRef<Float32Array>(null!);
   const burst = useRef(0);
   const beatState = useRef(createBeatConsumerState()).current;
+  const snareState = useRef(createBeatConsumerState()).current;
+  const majorState = useRef(createBeatConsumerState()).current;
 
   const geometry = useMemo(() => {
     const positions = new Float32Array(AMBIENT_COUNT * 3);
@@ -46,7 +49,13 @@ function AmbientMotes({ featureFrame }: { featureFrame: AudioFeatureFrame }) {
     const cam = state.camera.position;
 
     const beatHit = consumeBeat(featureFrame, beatState);
-    if (beatHit > 0) burst.current = beatHit;
+    if (beatHit > 0) burst.current = Math.max(burst.current, beatHit);
+    const snareHit = consumeSnareHit(featureFrame, snareState);
+    if (snareHit > 0) burst.current = Math.max(burst.current, snareHit * 0.85);
+    // A major event reads as an explosion: a burst far past anything a
+    // single beat produces.
+    const majorHit = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorState);
+    if (majorHit > 0) burst.current = Math.max(burst.current, 2.5 + majorHit * 2.5);
     burst.current *= Math.exp(-delta * 4);
 
     // Stronger parallax at higher travel speed — the whole point of a
@@ -72,8 +81,8 @@ function AmbientMotes({ featureFrame }: { featureFrame: AudioFeatureFrame }) {
     posAttr.needsUpdate = true;
 
     if (materialRef.current) {
-      materialRef.current.opacity = 0.22 + activity * 0.55 + burst.current * 0.75;
-      materialRef.current.size = 0.12 + activity * 0.16 + burst.current * 0.22;
+      materialRef.current.opacity = Math.min(1, 0.22 + activity * 0.55 + burst.current * 0.75);
+      materialRef.current.size = 0.12 + activity * 0.16 + burst.current * 0.3;
     }
   });
 

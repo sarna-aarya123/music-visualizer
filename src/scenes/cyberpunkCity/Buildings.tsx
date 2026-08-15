@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import type { SceneProps } from '../types';
-import { consumeBeat, createBeatConsumerState } from '../../audio/beatConsumer';
+import { consumeBeat, consumeSnareHit, createBeatConsumerState } from '../../audio/beatConsumer';
+import { getMajorEventEnvelope } from './world/musicEventDirector';
 
 // ---------------------------------------------------------------------------
 // Rendering only — placement now comes entirely from world/worldGenerator.ts,
@@ -148,6 +149,7 @@ export function Buildings({ featureFrame, world }: SceneProps) {
   const material = useMemo(() => new BuildingMaterial(), []);
   const pulse = useRef(0);
   const beatState = useRef(createBeatConsumerState()).current;
+  const snareState = useRef(createBeatConsumerState()).current;
 
   const geometry = useMemo(() => {
     const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -213,19 +215,22 @@ export function Buildings({ featureFrame, world }: SceneProps) {
   useFrame((state, rawDelta) => {
     const dt = Math.min(rawDelta, 0.05);
 
-    // Beat → illumination pulse: consumed exactly once per beat, then
-    // decays smoothly — every detected beat visibly brightens the skyline
-    // for a moment, never silently.
+    // Beat/snare → illumination pulse: consumed exactly once per event,
+    // then decays smoothly — every detected hit visibly brightens the
+    // skyline for a moment, never silently. A major event layers a much
+    // bigger, longer surge on top via the shared envelope.
     const beatHit = consumeBeat(featureFrame, beatState);
-    if (beatHit > 0) pulse.current = beatHit;
+    if (beatHit > 0) pulse.current = Math.max(pulse.current, beatHit);
+    const snareHit = consumeSnareHit(featureFrame, snareState);
+    if (snareHit > 0) pulse.current = Math.max(pulse.current, snareHit * 0.8);
     pulse.current *= Math.exp(-dt * 6);
 
     const u = material.uniforms;
     u.uTime.value = state.clock.elapsedTime;
     u.uBass.value = featureFrame.bass;
     u.uEnergy.value = featureFrame.energy;
-    u.uHigh.value = featureFrame.high;
-    u.uPulse.value = pulse.current;
+    u.uHigh.value = featureFrame.high + featureFrame.hihatIntensity * 0.3;
+    u.uPulse.value = Math.max(pulse.current, getMajorEventEnvelope());
     (u.uCameraPos.value as THREE.Vector3).copy(state.camera.position);
   });
 

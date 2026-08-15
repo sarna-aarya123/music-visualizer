@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { MusicEventDirector } from './MusicEventDirector';
 import { CameraRig } from './CameraRig';
 import { CityAtmosphere } from './CityAtmosphere';
 import { BackgroundSkyline } from './BackgroundSkyline';
@@ -23,6 +24,7 @@ export function CyberpunkCityScene({ featureFrame }: { featureFrame: AudioFeatur
 
   return (
     <>
+      <MusicEventDirector featureFrame={featureFrame} />
       <CameraRig featureFrame={featureFrame} route={route} world={world} />
       <CityAtmosphere featureFrame={featureFrame} route={route} world={world} />
       <BackgroundSkyline featureFrame={featureFrame} route={route} world={world} />
