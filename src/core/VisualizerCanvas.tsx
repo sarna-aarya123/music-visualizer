@@ -49,7 +49,7 @@ function PostFX() {
 export function VisualizerCanvas() {
   return (
     <Canvas
-      camera={{ position: [0, 5.5, 8], fov: 50, near: 0.1, far: 400 }}
+      camera={{ position: [0, 5.5, 8], fov: 52, near: 0.1, far: 1000 }}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       dpr={[1, 1.75]}
     >

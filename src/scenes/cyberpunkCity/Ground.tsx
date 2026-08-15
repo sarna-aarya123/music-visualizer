@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import type { SceneProps } from '../types';
@@ -7,6 +7,8 @@ import { consumeBeat, createBeatConsumerState } from '../../audio/beatConsumer';
 
 const RIPPLE_SPEED = 22; // world units/sec the impact ring expands at
 const RIPPLE_LIFETIME = 1.1; // seconds before a ripple fully fades
+
+const RIBBON_SAMPLES = 260;
 
 const GroundMaterial = shaderMaterial(
   {
@@ -16,7 +18,7 @@ const GroundMaterial = shaderMaterial(
     uFogColor: new THREE.Color('#05030c'),
     uBaseColor: new THREE.Color('#07061a'),
     uLineColor: new THREE.Color('#7ef9ff'),
-    uImpactCenter: new THREE.Vector2(0, 0),
+    uImpactCenter: new THREE.Vector3(0, 0, 0),
     uImpactAge: 999,
     uImpactStrength: 0,
   },
@@ -37,7 +39,7 @@ const GroundMaterial = shaderMaterial(
     uniform vec3 uFogColor;
     uniform vec3 uBaseColor;
     uniform vec3 uLineColor;
-    uniform vec2 uImpactCenter;
+    uniform vec3 uImpactCenter;
     uniform float uImpactAge;
     uniform float uImpactStrength;
     varying vec3 vWorldPos;
@@ -49,13 +51,11 @@ const GroundMaterial = shaderMaterial(
 
       vec3 col = mix(uBaseColor, uLineColor, line * (0.55 + 0.45 * uEnergy));
 
-      float roadGlow = smoothstep(9.0, 0.0, abs(vWorldPos.x)) * 0.12;
-      col += uLineColor * roadGlow;
-
-      // Beat impact: a bright ring expanding outward from under the camera,
-      // fading with both distance-from-front and age.
+      // Beat impact: a bright ring expanding outward from under the camera
+      // (in full 3D so it still reads correctly on elevated/sloped route
+      // sections), fading with both distance and age.
       float ringRadius = uImpactAge * ${RIPPLE_SPEED.toFixed(1)};
-      float distToImpact = distance(vWorldPos.xz, uImpactCenter);
+      float distToImpact = distance(vWorldPos, uImpactCenter);
       float ringBand = 1.0 - smoothstep(0.0, 2.2, abs(distToImpact - ringRadius));
       float ringFade = clamp(1.0 - uImpactAge / ${RIPPLE_LIFETIME.toFixed(2)}, 0.0, 1.0);
       col += uLineColor * ringBand * ringFade * uImpactStrength * 2.4;
@@ -69,11 +69,45 @@ const GroundMaterial = shaderMaterial(
   `
 );
 
-export function Ground({ featureFrame }: SceneProps) {
+export function Ground({ featureFrame, route }: SceneProps) {
+  const meshRef = useRef<THREE.Mesh>(null!);
   const material = useMemo(() => new GroundMaterial(), []);
   const beatState = useRef(createBeatConsumerState()).current;
   const impactStartTime = useRef(-999);
   const impactStrength = useRef(0);
+
+  // A ribbon that follows the route's centerline, width, and elevation —
+  // built once from the deterministic route so the ground can never
+  // disagree with where the camera (or the buildings) actually are.
+  const geometry = useMemo(() => {
+    const positions: number[] = [];
+    const indices: number[] = [];
+
+    for (let i = 0; i <= RIBBON_SAMPLES; i++) {
+      const t = (i % RIBBON_SAMPLES) / RIBBON_SAMPLES;
+      const frame = route.getFrameAt(t);
+      const { corridorRadius } = route.getDistrictInfoAt(t);
+      const left = frame.position.clone().addScaledVector(frame.right, -corridorRadius);
+      const right = frame.position.clone().addScaledVector(frame.right, corridorRadius);
+      positions.push(left.x, left.y, left.z, right.x, right.y, right.z);
+
+      if (i < RIBBON_SAMPLES) {
+        const a = i * 2;
+        const b = i * 2 + 1;
+        const c = i * 2 + 2;
+        const d = i * 2 + 3;
+        indices.push(a, b, c, b, d, c);
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  }, [route]);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
 
   useFrame((state) => {
     const t = state.clock.elapsedTime;
@@ -84,10 +118,7 @@ export function Ground({ featureFrame }: SceneProps) {
     if (beatHit > 0) {
       impactStartTime.current = t;
       impactStrength.current = beatHit;
-      (material.uniforms.uImpactCenter.value as THREE.Vector2).set(
-        state.camera.position.x,
-        state.camera.position.z
-      );
+      (material.uniforms.uImpactCenter.value as THREE.Vector3).copy(state.camera.position);
     }
 
     const u = material.uniforms;
@@ -99,9 +130,12 @@ export function Ground({ featureFrame }: SceneProps) {
   });
 
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, -70]}>
-      <planeGeometry args={[400, 400, 1, 1]} />
-      <primitive object={material} attach="material" />
+    <mesh ref={meshRef} geometry={geometry}>
+      {/* DoubleSide: the ribbon's winding direction depends on the route's
+          local curvature/right-vector, which flips sign around the loop —
+          simpler and cheap (it's one thin strip) to just always draw both
+          faces than to hand-derive consistent winding for every segment. */}
+      <primitive object={material} attach="material" side={THREE.DoubleSide} />
     </mesh>
   );
 }

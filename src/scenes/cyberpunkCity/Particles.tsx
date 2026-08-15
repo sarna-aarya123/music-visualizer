@@ -2,11 +2,14 @@ import * as THREE from 'three';
 import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { SceneProps } from '../types';
+import type { AudioFeatureFrame } from '../../audio/types';
 import { consumeBeat, createBeatConsumerState } from '../../audio/beatConsumer';
+import { cameraMotionState } from './world/cameraMotionState';
+import { MAX_SPEED_CAP } from './world/musicController';
 
 const AMBIENT_COUNT = 260;
-const AMBIENT_HEIGHT_RANGE = 40;
-const AMBIENT_SPREAD = 70;
+const AMBIENT_HEIGHT_RANGE = 34;
+const AMBIENT_SPREAD = 90;
 
 const DUST_COUNT = 90;
 const DUST_SPREAD = 5.5; // stays close around the camera — the foreground layer
@@ -14,7 +17,7 @@ const DUST_SPREAD = 5.5; // stays close around the camera — the foreground lay
 /** Ambient embers drifting through the whole scene. Base drift is always
  *  present (idle scene still feels alive); high frequencies add extra
  *  upward speed/opacity, and every beat adds a short burst on top. */
-function AmbientMotes({ featureFrame }: SceneProps) {
+function AmbientMotes({ featureFrame }: { featureFrame: AudioFeatureFrame }) {
   const materialRef = useRef<THREE.PointsMaterial>(null!);
   const speedsRef = useRef<Float32Array>(null!);
   const burst = useRef(0);
@@ -26,7 +29,7 @@ function AmbientMotes({ featureFrame }: SceneProps) {
     for (let i = 0; i < AMBIENT_COUNT; i++) {
       positions[i * 3 + 0] = (Math.random() - 0.5) * AMBIENT_SPREAD;
       positions[i * 3 + 1] = Math.random() * AMBIENT_HEIGHT_RANGE;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * AMBIENT_SPREAD - 60;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * AMBIENT_SPREAD;
       speeds[i] = 0.4 + Math.random() * 1.2;
     }
     speedsRef.current = speeds;
@@ -35,21 +38,36 @@ function AmbientMotes({ featureFrame }: SceneProps) {
     return geo;
   }, []);
 
-  useFrame((_, rawDelta) => {
+  useFrame((state, rawDelta) => {
     const delta = Math.min(rawDelta, 0.05);
     const posAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
     const speeds = speedsRef.current;
     const activity = featureFrame.high;
+    const cam = state.camera.position;
 
     const beatHit = consumeBeat(featureFrame, beatState);
     if (beatHit > 0) burst.current = beatHit;
     burst.current *= Math.exp(-delta * 4);
 
+    // Stronger parallax at higher travel speed — the whole point of a
+    // "flying through" feeling rather than a static field of motes.
+    const speedFrac = THREE.MathUtils.clamp(cameraMotionState.speed / MAX_SPEED_CAP, 0, 1);
+
     for (let i = 0; i < AMBIENT_COUNT; i++) {
+      let x = posAttr.getX(i);
       let y = posAttr.getY(i);
-      y += delta * (0.6 + speeds[i] * (0.5 + activity * 1.5 + burst.current * 4));
+      let z = posAttr.getZ(i);
+
+      y += delta * (0.6 + speeds[i] * (0.5 + activity * 1.5 + burst.current * 4 + speedFrac * 2));
       if (y > AMBIENT_HEIGHT_RANGE) y = 0;
-      posAttr.setY(i, y);
+
+      // Always stay in a cloud around wherever the camera currently is on
+      // the route, rather than a fixed patch near world origin — the loop
+      // is far larger than this spread.
+      if (Math.abs(x - cam.x) > AMBIENT_SPREAD / 2) x = cam.x + (Math.random() - 0.5) * AMBIENT_SPREAD;
+      if (Math.abs(z - cam.z) > AMBIENT_SPREAD / 2) z = cam.z + (Math.random() - 0.5) * AMBIENT_SPREAD;
+
+      posAttr.setXYZ(i, x, y, z);
     }
     posAttr.needsUpdate = true;
 
@@ -78,7 +96,7 @@ function AmbientMotes({ featureFrame }: SceneProps) {
  *  times — the foreground depth layer: close, slightly out of focus-
  *  feeling particles that drift past as the camera travels, giving the
  *  environment scale and parallax rather than feeling like a flat backdrop. */
-function ForegroundDust({ featureFrame }: SceneProps) {
+function ForegroundDust({ featureFrame }: { featureFrame: AudioFeatureFrame }) {
   const materialRef = useRef<THREE.PointsMaterial>(null!);
 
   const geometry = useMemo(() => {
