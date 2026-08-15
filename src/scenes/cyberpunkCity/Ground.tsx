@@ -58,7 +58,7 @@ const GroundMaterial = shaderMaterial(
       float distToImpact = distance(vWorldPos.xz, uImpactCenter);
       float ringBand = 1.0 - smoothstep(0.0, 2.2, abs(distToImpact - ringRadius));
       float ringFade = clamp(1.0 - uImpactAge / ${RIPPLE_LIFETIME.toFixed(2)}, 0.0, 1.0);
-      col += uLineColor * ringBand * ringFade * uImpactStrength * 1.4;
+      col += uLineColor * ringBand * ringFade * uImpactStrength * 2.4;
 
       float dist = length(uCameraPos - vWorldPos);
       float fogAmount = smoothstep(20.0, 130.0, dist);

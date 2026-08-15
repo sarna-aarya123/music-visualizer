@@ -47,15 +47,15 @@ function AmbientMotes({ featureFrame }: SceneProps) {
 
     for (let i = 0; i < AMBIENT_COUNT; i++) {
       let y = posAttr.getY(i);
-      y += delta * (0.6 + speeds[i] * (0.5 + activity * 1.5 + burst.current * 2));
+      y += delta * (0.6 + speeds[i] * (0.5 + activity * 1.5 + burst.current * 4));
       if (y > AMBIENT_HEIGHT_RANGE) y = 0;
       posAttr.setY(i, y);
     }
     posAttr.needsUpdate = true;
 
     if (materialRef.current) {
-      materialRef.current.opacity = 0.22 + activity * 0.55 + burst.current * 0.5;
-      materialRef.current.size = 0.12 + activity * 0.16 + burst.current * 0.12;
+      materialRef.current.opacity = 0.22 + activity * 0.55 + burst.current * 0.75;
+      materialRef.current.size = 0.12 + activity * 0.16 + burst.current * 0.22;
     }
   });
 

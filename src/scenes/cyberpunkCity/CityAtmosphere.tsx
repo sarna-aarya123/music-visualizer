@@ -1,15 +1,22 @@
 import * as THREE from 'three';
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { shaderMaterial, Stars } from '@react-three/drei';
 import type { SceneProps } from '../types';
 import { FOG_COLOR } from './layout';
+import { consumeBeat, createBeatConsumerState } from '../../audio/beatConsumer';
+
+const AMBIENT_BASE = 0.35;
+const DIRECTIONAL_BASE = 0.35;
 
 const SkyMaterial = shaderMaterial(
   {
     uTopColor: new THREE.Color('#0a0a2a'),
-    uBottomColor: new THREE.Color('#2a1440'),
-    uGlowColor: new THREE.Color('#ff3fb0'),
+    uBottomColor: new THREE.Color('#241238'),
+    // Warm amber accent instead of magenta — the sky's single accent color
+    // now matches the buildings' dominant window color, so glow, moon, and
+    // facades read as one deliberate palette rather than generic neon.
+    uGlowColor: new THREE.Color('#ffb35c'),
     uMoonColor: new THREE.Color('#fff3d6'),
     uMoonDir: new THREE.Vector3(0.35, 0.45, -0.82).normalize(),
     uTime: 0,
@@ -81,17 +88,41 @@ const SkyMaterial = shaderMaterial(
  *  one audio band beyond a subtle overall energy tint on the horizon glow. */
 export function CityAtmosphere({ featureFrame }: SceneProps) {
   const material = useMemo(() => new SkyMaterial(), []);
+  const fogRef = useRef<THREE.Fog>(null!);
+  const ambientRef = useRef<THREE.AmbientLight>(null!);
+  const directionalRef = useRef<THREE.DirectionalLight>(null!);
 
-  useFrame((state) => {
+  const beatState = useRef(createBeatConsumerState()).current;
+  const flash = useRef(0);
+
+  useFrame((state, rawDelta) => {
+    const dt = Math.min(rawDelta, 0.05);
     material.uniforms.uEnergy.value = featureFrame.energy;
     material.uniforms.uTime.value = state.clock.elapsedTime;
+
+    // Fog breathes with bass — large-scale environmental motion rather than
+    // a static gray overlay.
+    if (fogRef.current) {
+      const breathe = featureFrame.bass * 14;
+      fogRef.current.near = 20 - breathe * 0.3;
+      fogRef.current.far = 150 - breathe;
+    }
+
+    // Beat → brief lighting flash, on top of the continuous energy-driven
+    // horizon glow — a coordinated, obvious environmental response.
+    const beatHit = consumeBeat(featureFrame, beatState);
+    if (beatHit > 0) flash.current = beatHit;
+    flash.current *= Math.exp(-dt * 6);
+
+    if (ambientRef.current) ambientRef.current.intensity = AMBIENT_BASE + flash.current * 0.5;
+    if (directionalRef.current) directionalRef.current.intensity = DIRECTIONAL_BASE + flash.current * 0.6;
   });
 
   return (
     <>
-      <fog attach="fog" args={[FOG_COLOR, 20, 150]} />
-      <ambientLight intensity={0.35} color="#3a2a6b" />
-      <directionalLight position={[20, 30, -10]} intensity={0.35} color="#8fd8ff" />
+      <fog ref={fogRef} attach="fog" args={[FOG_COLOR, 20, 150]} />
+      <ambientLight ref={ambientRef} intensity={AMBIENT_BASE} color="#3a2a6b" />
+      <directionalLight ref={directionalRef} position={[20, 30, -10]} intensity={DIRECTIONAL_BASE} color="#8fd8ff" />
 
       <mesh scale={280}>
         <sphereGeometry args={[1, 32, 32]} />

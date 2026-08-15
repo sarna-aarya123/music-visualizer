@@ -31,6 +31,10 @@ export interface AudioFeatureFrame {
   beatIntensity: number;
   /** Playback time (seconds) at which the most recent beat was detected. */
   beatTime: number;
+  /** Smoothed seconds-between-beats — a rough live tempo estimate systems
+   *  can use to make their rhythm perceptibly relate to the track's, e.g.
+   *  switching waypoints more often when beats are arriving faster. */
+  beatInterval: number;
 
   /** Current playback time in seconds, mirrored here for convenience. */
   time: number;
@@ -47,6 +51,7 @@ export function createEmptyFeatureFrame(): AudioFeatureFrame {
     beatId: 0,
     beatIntensity: 0,
     beatTime: 0,
+    beatInterval: 0.5,
     time: 0,
   };
 }
