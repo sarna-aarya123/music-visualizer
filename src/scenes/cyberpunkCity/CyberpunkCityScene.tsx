@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { CameraRig } from './CameraRig';
 import { CityAtmosphere } from './CityAtmosphere';
 import { BackgroundSkyline } from './BackgroundSkyline';
@@ -5,26 +6,30 @@ import { Ground } from './Ground';
 import { Buildings } from './Buildings';
 import { StreetProps } from './StreetProps';
 import { Particles } from './Particles';
-import type { SceneProps } from '../types';
+import { generateRoute } from './world/routeGenerator';
+import { generateWorld } from './world/worldGenerator';
+import { WORLD_SEED } from './layout';
+import type { AudioFeatureFrame } from '../../audio/types';
 
 /**
- * Anime-inspired futuristic city at night — the first (and for now only)
- * scene. Purely procedural: no external models/textures.
- *
- * Layered back-to-front for depth: BackgroundSkyline (distant, hazy)
- * → Buildings (the detailed midground corridor) → StreetProps (foreground,
- * close to the camera path) → Particles (span all three layers).
+ * Anime-inspired futuristic game-level city — a closed-loop route the
+ * camera rides, with the world (buildings, landmarks, ground, props) built
+ * around it. Route and world are generated once, deterministically from
+ * WORLD_SEED, and threaded down to every component that needs them.
  */
-export function CyberpunkCityScene({ featureFrame }: SceneProps) {
+export function CyberpunkCityScene({ featureFrame }: { featureFrame: AudioFeatureFrame }) {
+  const route = useMemo(() => generateRoute(WORLD_SEED), []);
+  const world = useMemo(() => generateWorld(route, WORLD_SEED), [route]);
+
   return (
     <>
-      <CameraRig featureFrame={featureFrame} />
-      <CityAtmosphere featureFrame={featureFrame} />
-      <BackgroundSkyline featureFrame={featureFrame} />
-      <Ground featureFrame={featureFrame} />
-      <Buildings featureFrame={featureFrame} />
-      <StreetProps featureFrame={featureFrame} />
-      <Particles featureFrame={featureFrame} />
+      <CameraRig featureFrame={featureFrame} route={route} world={world} />
+      <CityAtmosphere featureFrame={featureFrame} route={route} world={world} />
+      <BackgroundSkyline featureFrame={featureFrame} route={route} world={world} />
+      <Ground featureFrame={featureFrame} route={route} world={world} />
+      <Buildings featureFrame={featureFrame} route={route} world={world} />
+      <StreetProps featureFrame={featureFrame} route={route} world={world} />
+      <Particles featureFrame={featureFrame} route={route} world={world} />
     </>
   );
 }

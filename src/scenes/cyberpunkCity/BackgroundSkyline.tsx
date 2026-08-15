@@ -3,18 +3,18 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import type { SceneProps } from '../types';
-import { CORRIDOR_Z_END } from './layout';
 
 /**
- * A much larger, much cheaper second skyline far behind the main corridor —
- * simple flat silhouettes blended into haze rather than lit facades. This
- * is what sells "a whole city extends into the distance" instead of the
- * player just seeing a couple of rows of buildings floating in fog.
+ * A much larger, much cheaper second skyline scattered in a ring well
+ * outside the route's own bounding circle — simple flat silhouettes
+ * blended into haze rather than lit facades. Because the route is now a
+ * closed loop rather than a straight corridor, this has to surround the
+ * whole loop instead of sitting behind one fixed end, so a distant skyline
+ * is always visible no matter where on the circuit the camera is.
  */
-const COUNT = 70;
-const BAND_NEAR = -Math.abs(CORRIDOR_Z_END) - 20;
-const BAND_FAR = -Math.abs(CORRIDOR_Z_END) - 140;
-const BAND_HALF_WIDTH = 90;
+const COUNT = 90;
+const RING_INNER = 240;
+const RING_OUTER = 420;
 
 const SilhouetteMaterial = shaderMaterial(
   {
@@ -76,13 +76,13 @@ export function BackgroundSkyline(_props: SceneProps) {
   useEffect(() => {
     const dummy = new THREE.Object3D();
     for (let i = 0; i < COUNT; i++) {
-      const x = (Math.random() - 0.5) * BAND_HALF_WIDTH * 2;
-      const z = BAND_NEAR + (BAND_FAR - BAND_NEAR) * Math.random();
-      const width = 4 + Math.random() * 9;
-      const depth = 4 + Math.random() * 9;
-      const height = 12 + Math.random() * 55;
+      const angle = Math.random() * Math.PI * 2;
+      const radius = RING_INNER + Math.random() * (RING_OUTER - RING_INNER);
+      const width = 5 + Math.random() * 11;
+      const depth = 5 + Math.random() * 11;
+      const height = 14 + Math.random() * 65;
 
-      dummy.position.set(x, height / 2, z);
+      dummy.position.set(Math.cos(angle) * radius, height / 2, Math.sin(angle) * radius);
       dummy.scale.set(width, height, depth);
       dummy.updateMatrix();
       meshRef.current.setMatrixAt(i, dummy.matrix);
