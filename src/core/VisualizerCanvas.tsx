@@ -4,9 +4,12 @@ import { EffectComposer, Bloom, Vignette, Noise } from '@react-three/postprocess
 import { FeatureUpdater } from './FeatureUpdater';
 import { CyberpunkCityScene } from '../scenes/cyberpunkCity/CyberpunkCityScene';
 import { featureFrame } from '../audio/featureFrame';
+import { consumeBeat, createBeatConsumerState } from '../audio/beatConsumer';
 
 /** Overall energy → post-processing intensity (the "atmosphere breathes
- *  with the track" mapping), plus a small kick punch on bloom.
+ *  with the track" mapping), plus a reliable atmospheric pulse on every
+ *  detected beat, consumed exactly once via the same beat-counter
+ *  mechanism every other reactive system uses.
  *  Typed loosely (`any`) because @react-three/postprocessing's ref type
  *  for effect components doesn't line up with the underlying effect
  *  instance across versions — the instance itself does expose `.intensity`
@@ -14,11 +17,17 @@ import { featureFrame } from '../audio/featureFrame';
 function PostFX() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bloomRef = useRef<any>(null);
+  const pulse = useRef(0);
+  const beatState = useRef(createBeatConsumerState()).current;
 
-  useFrame(() => {
+  useFrame((_, rawDelta) => {
+    const dt = Math.min(rawDelta, 0.05);
+    const beatHit = consumeBeat(featureFrame, beatState);
+    if (beatHit > 0) pulse.current = beatHit;
+    pulse.current *= Math.exp(-dt * 7);
+
     if (bloomRef.current) {
-      bloomRef.current.intensity =
-        0.5 + featureFrame.energy * 1.6 + featureFrame.kickImpulse * 0.7;
+      bloomRef.current.intensity = 0.5 + featureFrame.energy * 1.6 + pulse.current * 0.9;
     }
   });
 

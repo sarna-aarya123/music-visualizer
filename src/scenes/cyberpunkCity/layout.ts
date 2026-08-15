@@ -7,6 +7,7 @@
 export const STREET_HALF_WIDTH = 7;
 export const ROW_SPACING = 12;
 export const ROWS = 11;
+export const PER_ROW = 8;
 
 /** Camera travels back and forth along Z between these two extremes. */
 export const CORRIDOR_Z_START = 14;

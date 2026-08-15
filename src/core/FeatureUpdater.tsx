@@ -17,7 +17,7 @@ export function FeatureUpdater() {
   const extractorRef = useRef<FeatureExtractor | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     const analyser = audioEngine.analyser;
     if (!analyser) return;
 
@@ -28,7 +28,7 @@ export function FeatureUpdater() {
       analyserRef.current = analyser;
     }
 
-    extractorRef.current.update(featureFrame, audioEngine.getCurrentTime());
+    extractorRef.current.update(featureFrame, audioEngine.getCurrentTime(), delta);
   });
 
   return null;
