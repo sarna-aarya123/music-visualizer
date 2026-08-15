@@ -5,6 +5,7 @@ import { shaderMaterial, Stars } from '@react-three/drei';
 import type { SceneProps } from '../types';
 import { FOG_COLOR } from './layout';
 import { consumeBeat, createBeatConsumerState } from '../../audio/beatConsumer';
+import { getMajorEventEnvelope } from './world/musicEventDirector';
 
 const AMBIENT_BASE = 0.35;
 const DIRECTIONAL_BASE = 0.35;
@@ -101,21 +102,25 @@ export function CityAtmosphere({ featureFrame }: SceneProps) {
     material.uniforms.uTime.value = state.clock.elapsedTime;
 
     // Fog breathes with bass — large-scale environmental motion rather than
-    // a static gray overlay.
+    // a static gray overlay. A major event pulls it back hard for a
+    // dramatic "atmosphere changes" moment.
+    const majorEnvelope = getMajorEventEnvelope();
     if (fogRef.current) {
-      const breathe = featureFrame.bass * 14;
+      const breathe = featureFrame.bass * 14 + majorEnvelope * 40;
       fogRef.current.near = 20 - breathe * 0.3;
       fogRef.current.far = 150 - breathe;
     }
 
     // Beat → brief lighting flash, on top of the continuous energy-driven
-    // horizon glow — a coordinated, obvious environmental response.
+    // horizon glow — a coordinated, obvious environmental response. A
+    // major event adds a much bigger flash on top of that.
     const beatHit = consumeBeat(featureFrame, beatState);
-    if (beatHit > 0) flash.current = beatHit;
+    if (beatHit > 0) flash.current = Math.max(flash.current, beatHit);
     flash.current *= Math.exp(-dt * 6);
 
-    if (ambientRef.current) ambientRef.current.intensity = AMBIENT_BASE + flash.current * 0.5;
-    if (directionalRef.current) directionalRef.current.intensity = DIRECTIONAL_BASE + flash.current * 0.6;
+    const totalFlash = flash.current + majorEnvelope * 3;
+    if (ambientRef.current) ambientRef.current.intensity = AMBIENT_BASE + totalFlash * 0.6;
+    if (directionalRef.current) directionalRef.current.intensity = DIRECTIONAL_BASE + totalFlash * 0.75;
   });
 
   return (

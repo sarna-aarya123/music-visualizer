@@ -112,7 +112,23 @@ function buildBuilding(
   const depth = isLowRise ? 4 + rng() * 3.5 : 2.0 + rng() * 2.8;
   const height = isLowRise ? Math.min(maxH, 2.5 + rng() * 3) : minH + rng() * (maxH - minH);
 
-  let y = base.y;
+  // A foundation plinth, wider than the building itself, so it reads as
+  // standing on ground rather than a box floating at an arbitrary height —
+  // ties into Ground.tsx's terrain skirt at the same base elevation.
+  const foundationHeight = 0.7 + rng() * 0.6;
+  pushSegment(
+    segments,
+    base.x,
+    base.y + foundationHeight / 2,
+    base.z,
+    rotationY,
+    width + 1.4,
+    depth + 1.4,
+    foundationHeight,
+    seed
+  );
+
+  let y = base.y + foundationHeight;
   pushSegment(segments, base.x, y + height / 2, base.z, rotationY, width, depth, height, seed);
   y += height;
 
