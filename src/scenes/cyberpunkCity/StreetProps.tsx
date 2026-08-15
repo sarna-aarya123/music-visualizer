@@ -8,7 +8,7 @@ import type { SceneProps } from '../types';
  * (strong parallax) and give the corridor a sense of being a real,
  * inhabited street rather than an empty flight path.
  */
-const SPACING_T = 0.012; // fraction of the loop between lamps — a lot of them
+const SPACING_T = 0.009; // fraction of the loop between lamps — scales with route length
 
 const poleGeometry = new THREE.CylinderGeometry(0.06, 0.09, 1, 6);
 const poleMaterial = new THREE.MeshStandardMaterial({ color: '#0c0b1a', roughness: 0.8 });

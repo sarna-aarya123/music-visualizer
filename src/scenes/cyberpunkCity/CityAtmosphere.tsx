@@ -129,7 +129,9 @@ export function CityAtmosphere({ featureFrame }: SceneProps) {
       <ambientLight ref={ambientRef} intensity={AMBIENT_BASE} color="#3a2a6b" />
       <directionalLight ref={directionalRef} position={[20, 30, -10]} intensity={DIRECTIONAL_BASE} color="#8fd8ff" />
 
-      <mesh scale={280}>
+      {/* Scale comfortably exceeds the route's max bounding radius (~320)
+          plus building placement, so the camera is never outside the dome. */}
+      <mesh scale={550}>
         <sphereGeometry args={[1, 32, 32]} />
         <primitive object={material} attach="material" side={THREE.BackSide} />
       </mesh>

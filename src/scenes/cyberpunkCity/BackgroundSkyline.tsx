@@ -13,8 +13,11 @@ import type { SceneProps } from '../types';
  * is always visible no matter where on the circuit the camera is.
  */
 const COUNT = 90;
-const RING_INNER = 240;
-const RING_OUTER = 420;
+// The route's own bounding radius can reach ~320 (see routeGenerator's
+// BASE_RADIUS + jitter), plus building placement extends further still —
+// keep this ring safely outside all of that.
+const RING_INNER = 380;
+const RING_OUTER = 620;
 
 const SilhouetteMaterial = shaderMaterial(
   {

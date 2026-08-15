@@ -14,6 +14,13 @@ export interface Segment {
   y: number;
   z: number;
   rotationY: number;
+  /** Radians, only ever set on angled-roof wedge slabs — everything else
+   *  stays axis-aligned in X/Z, which is what keeps the corridor-clearance
+   *  guarantee simple (a tilted building body would need per-segment
+   *  bounding-box math; a tilted roof slab sitting near the building's own
+   *  footprint doesn't). */
+  tiltX?: number;
+  tiltZ?: number;
   sx: number;
   sy: number;
   sz: number;
@@ -69,7 +76,9 @@ export interface WorldLayout {
 const ANTENNA_COLORS = ['#ff5577', '#ffe08a', '#8fd8ff'];
 const SIGN_COLORS = ['#ffb35c', '#7ef2ff', '#ff6fa0', '#ffe08a'];
 
-const SAMPLE_COUNT = 150;
+// Scales with the route's circumference (routeGenerator's BASE_RADIUS) so
+// building density along the corridor stays consistent as the world grows.
+const SAMPLE_COUNT = 205;
 const CLEARANCE_MARGIN = 2.2;
 
 function pushSegment(
@@ -265,15 +274,47 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
       const built = buildBuilding(rng, base, rotationY, profile.heightRange, segments);
 
       if (built.topCy - base.y > 9 && rng() < 0.42) {
-        const isSpire = rng() < 0.55;
-        roofCaps.push({
-          x: built.topCx,
-          y: built.topCy,
-          z: built.topCz,
-          radius: Math.max(built.topWidth, built.topDepth) * (isSpire ? 0.55 : 0.72),
-          height: isSpire ? 3 + rng() * 5.5 : 1.1 + rng() * 1.6,
-          rotationY: rotationY + rng() * Math.PI,
-        });
+        const roofRoll = rng();
+        if (roofRoll < 0.38) {
+          // Spire/cone — the existing tapered-tower cap.
+          roofCaps.push({
+            x: built.topCx,
+            y: built.topCy,
+            z: built.topCz,
+            radius: Math.max(built.topWidth, built.topDepth) * 0.55,
+            height: 3 + rng() * 5.5,
+            rotationY: rotationY + rng() * Math.PI,
+          });
+        } else if (roofRoll < 0.62) {
+          // Small pyramidal cap — the wider, shorter variant.
+          roofCaps.push({
+            x: built.topCx,
+            y: built.topCy,
+            z: built.topCz,
+            radius: Math.max(built.topWidth, built.topDepth) * 0.72,
+            height: 1.1 + rng() * 1.6,
+            rotationY: rotationY + rng() * Math.PI,
+          });
+        } else {
+          // Giant angled wedge roof — a big, deliberately tilted overhanging
+          // slab. This is the shape-language element that reads as
+          // "designed" rather than "box with a hat": an asymmetric,
+          // oversized roof plane rather than another radially-symmetric cap.
+          const wedgeW = built.topWidth * (1.5 + rng() * 0.7);
+          const wedgeD = built.topDepth * (1.3 + rng() * 0.6);
+          const tilt = (rng() < 0.5 ? -1 : 1) * (0.22 + rng() * 0.28);
+          segments.push({
+            x: built.topCx,
+            y: built.topCy + 0.4,
+            z: built.topCz,
+            rotationY,
+            tiltX: tilt,
+            sx: wedgeW,
+            sy: 0.6,
+            sz: wedgeD,
+            seed: rng(),
+          });
+        }
       }
 
       if (rng() < 0.3) {
