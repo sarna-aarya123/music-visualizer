@@ -10,10 +10,12 @@ import { PER_ROW, ROW_SPACING, ROWS, STREET_HALF_WIDTH } from './layout';
 // Procedural skyline generation
 //
 // Every building is 1-4 stacked box "segments" that narrow and offset as
-// they rise (setbacks/towers) instead of one uniform box, plus optional
-// antennas, rooftop machinery, signage, and the occasional bridge between
-// neighbors — this is what gives the skyline an irregular, interesting
-// silhouette instead of reading as a field of identical cubes.
+// they rise (setbacks/towers), occasionally capped with a tapered/pyramidal
+// roof spire and/or a cantilevered suspended platform, plus antennas,
+// rooftop machinery, signage, and the occasional bridge between neighbors.
+// A fraction of buildings are deliberately generated low and wide instead
+// of tall, so the skyline reads as varied shape families rather than one
+// archetype repeated at different heights.
 // ---------------------------------------------------------------------------
 
 interface Segment {
@@ -56,15 +58,25 @@ interface Sign {
   color: THREE.Color;
 }
 
+interface RoofCap {
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  height: number;
+  rotationY: number;
+}
+
 interface SkylineLayout {
   segments: Segment[];
   antennas: Antenna[];
   machinery: Machinery[];
   signs: Sign[];
+  roofCaps: RoofCap[];
 }
 
 const ANTENNA_COLORS = ['#ff5577', '#ffe08a', '#8fd8ff'];
-const SIGN_COLORS = ['#ff3fb0', '#7ef9ff', '#ffdd55', '#8f6bff'];
+const SIGN_COLORS = ['#ffb35c', '#7ef2ff', '#ff6fa0', '#ffe08a'];
 
 function pushSegment(
   segments: Segment[],
@@ -81,18 +93,32 @@ function pushSegment(
   return bottomY + h;
 }
 
+interface BuiltBuilding {
+  topY: number;
+  halfWidth: number;
+  topWidth: number;
+  topDepth: number;
+  topCx: number;
+  topCz: number;
+  rotationY: number;
+}
+
 /** Builds one multi-segment building at (x, z) and appends its segments to
- *  the shared list. Returns its final roof height and base half-width so
- *  callers can place antennas/machinery/signs/bridges relative to it. */
-function buildBuilding(x: number, z: number, segments: Segment[]) {
+ *  the shared list. Returns geometry about its topmost segment so callers
+ *  can place roof caps/antennas/machinery/signs/bridges relative to it. */
+function buildBuilding(x: number, z: number, segments: Segment[]): BuiltBuilding {
   const seed = Math.random();
-  // A minority of buildings get a slight overall yaw for an "angled
-  // structure" look rather than everything being axis-aligned.
   const rotationY = Math.random() < 0.15 ? (Math.random() - 0.5) * 0.3 : 0;
 
-  const width = 2.2 + Math.random() * 3.2;
-  const depth = 2.0 + Math.random() * 2.8;
-  const height = 5 + Math.random() * 9;
+  // ~22% of buildings are deliberately low and wide — a distinct shape
+  // family instead of just a short version of the tower archetype — so the
+  // skyline reads as varied silhouettes rather than one shape at different
+  // heights.
+  const isLowRise = Math.random() < 0.22;
+
+  const width = isLowRise ? 4.5 + Math.random() * 4 : 2.2 + Math.random() * 3.2;
+  const depth = isLowRise ? 4 + Math.random() * 3.5 : 2.0 + Math.random() * 2.8;
+  const height = isLowRise ? 2.5 + Math.random() * 3 : 5 + Math.random() * 9;
 
   let y = pushSegment(segments, x, z, rotationY, 0, width, depth, height, seed);
   let cx = x;
@@ -101,10 +127,11 @@ function buildBuilding(x: number, z: number, segments: Segment[]) {
   let prevD = depth;
   let segCount = 1;
 
-  // Stack narrowing, offset setback segments on top — the probability of
-  // continuing drops with each additional segment so most buildings stay
-  // modest while a few become tall, elaborate towers.
-  while (segCount < 4 && Math.random() < (segCount === 1 ? 0.8 : segCount === 2 ? 0.48 : 0.25)) {
+  const maxSegments = isLowRise ? 2 : 4;
+  while (
+    segCount < maxSegments &&
+    Math.random() < (isLowRise ? 0.3 : segCount === 1 ? 0.8 : segCount === 2 ? 0.48 : 0.25)
+  ) {
     const shrink = 0.42 + Math.random() * 0.32;
     const w = Math.max(0.9, prevW * shrink);
     const d = Math.max(0.9, prevD * shrink);
@@ -121,7 +148,19 @@ function buildBuilding(x: number, z: number, segments: Segment[]) {
     segCount++;
   }
 
-  return { topY: y, halfWidth: width / 2 };
+  // Suspended platform: a wide, thin slab cantilevered out past the tower's
+  // edge partway up — reuses the same segment mesh/material, no extra draw
+  // calls, but reads as a distinct architectural gesture.
+  if (!isLowRise && height > 8 && Math.random() < 0.16) {
+    const platformW = prevW * (2.2 + Math.random() * 1.4);
+    const platformD = prevD * (1.3 + Math.random() * 0.6);
+    const platformY = height * (0.35 + Math.random() * 0.35);
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const offsetX = side * (platformW / 2 - prevW / 2);
+    pushSegment(segments, x + offsetX, z, rotationY, platformY, platformW, platformD, 0.5, seed);
+  }
+
+  return { topY: y, halfWidth: width / 2, topWidth: prevW, topDepth: prevD, topCx: cx, topCz: cz, rotationY };
 }
 
 function generateSkyline(): SkylineLayout {
@@ -129,6 +168,7 @@ function generateSkyline(): SkylineLayout {
   const antennas: Antenna[] = [];
   const machinery: Machinery[] = [];
   const signs: Sign[] = [];
+  const roofCaps: RoofCap[] = [];
 
   for (let row = 0; row < ROWS; row++) {
     const rowZ = -row * ROW_SPACING - 10;
@@ -141,6 +181,21 @@ function generateSkyline(): SkylineLayout {
         const z = rowZ - Math.random() * 4;
         const built = buildBuilding(x, z, segments);
         rowFootprints.push({ cx: x, cz: z, topY: built.topY, halfWidth: built.halfWidth });
+
+        // Tapered/pyramidal roof cap — the "angled roof / tapered tower"
+        // silhouette element. Faceted low-poly cone for a stylized rather
+        // than smooth-realistic spire.
+        if (built.topY > 9 && Math.random() < 0.42) {
+          const isSpire = Math.random() < 0.55;
+          roofCaps.push({
+            x: built.topCx,
+            y: built.topY,
+            z: built.topCz,
+            radius: Math.max(built.topWidth, built.topDepth) * (isSpire ? 0.55 : 0.72),
+            height: isSpire ? 3 + Math.random() * 5.5 : 1.1 + Math.random() * 1.6,
+            rotationY: built.rotationY + Math.random() * Math.PI,
+          });
+        }
 
         if (Math.random() < 0.3) {
           antennas.push({
@@ -201,12 +256,14 @@ function generateSkyline(): SkylineLayout {
     }
   }
 
-  return { segments, antennas, machinery, signs };
+  return { segments, antennas, machinery, signs, roofCaps };
 }
 
 // ---------------------------------------------------------------------------
-// Building facade material — stylized windows, per-building brightness
-// hierarchy, rim lighting, and a beat-triggered illumination pulse.
+// Building facade material — stylized, posterized (not smoothly-shaded)
+// windows, a cool-dominant/warm-accent art-directed palette, per-building
+// brightness hierarchy, rim lighting, and a beat-triggered illumination
+// pulse.
 // ---------------------------------------------------------------------------
 
 const BuildingMaterial = shaderMaterial(
@@ -218,8 +275,9 @@ const BuildingMaterial = shaderMaterial(
     uPulse: 0,
     uCameraPos: new THREE.Vector3(),
     uFogColor: new THREE.Color('#05030c'),
-    uColorBase: new THREE.Color('#0b0a1f'),
-    uColorWindow: new THREE.Color('#7ef9ff'),
+    uColorBase: new THREE.Color('#0a0e24'),
+    uColorWindow: new THREE.Color('#ffb35c'),
+    uColorAccent: new THREE.Color('#7ef2ff'),
   },
   // vertex
   /* glsl */ `
@@ -252,6 +310,7 @@ const BuildingMaterial = shaderMaterial(
     uniform vec3 uFogColor;
     uniform vec3 uColorBase;
     uniform vec3 uColorWindow;
+    uniform vec3 uColorAccent;
     varying vec2 vUv;
     varying float vSeed;
     varying vec3 vWorldPos;
@@ -282,11 +341,20 @@ const BuildingMaterial = shaderMaterial(
       float flickerSeed = hash(cell + vSeed * 13.0 + floor(uTime * 3.0));
       float flicker = step(0.994, flickerSeed) * uHigh * pane;
 
-      float glow = clamp(lit + flicker, 0.0, 1.0) * (1.0 + uPulse * 0.8);
+      float glow = clamp(lit + flicker, 0.0, 1.0) * (1.0 + uPulse * 1.4);
 
-      vec3 shade = uColorBase * (0.3 + 0.45 * vUv.y);
-      vec3 windowColor = mix(uColorWindow, vec3(1.0, 0.55, 0.72), fract(vSeed * 3.7));
-      windowColor = mix(windowColor, vec3(1.0, 0.82, 0.55), uPulse * 0.5);
+      // Posterized facade shading — a few flat brightness bands rather than
+      // a smooth gradient, for an illustrative/game-like surface instead of
+      // a physically-simulated one.
+      float band = floor(vUv.y * 4.0) / 4.0;
+      vec3 shade = uColorBase * (0.3 + 0.55 * band);
+
+      // Cool-dominant, warm-accent composition: most windows are the warm
+      // amber accent color; a minority of buildings use the cool cyan
+      // accent instead, giving color separation rather than one uniform
+      // "everything neon" wash.
+      vec3 windowColor = mix(uColorWindow, uColorAccent, step(0.72, fract(vSeed * 5.2)));
+      windowColor = mix(windowColor, vec3(1.0, 0.85, 0.6), uPulse * 0.7);
       vec3 col = mix(shade, windowColor, clamp(glow, 0.0, 1.0) * (0.65 + 0.5 * uEnergy));
 
       // Stylized rim light — silhouette edges facing the camera pick up a
@@ -294,7 +362,7 @@ const BuildingMaterial = shaderMaterial(
       // based specular.
       vec3 viewDir = normalize(uCameraPos - vWorldPos);
       float fresnel = pow(1.0 - clamp(dot(normalize(vNormalW), viewDir), 0.0, 1.0), 2.5);
-      col += vec3(0.45, 0.65, 1.0) * fresnel * 0.35 * (0.4 + 0.6 * uEnergy);
+      col += uColorAccent * fresnel * 0.4 * (0.4 + 0.6 * uEnergy);
 
       float dist = length(uCameraPos - vWorldPos);
       float fogAmount = smoothstep(28.0, 130.0, dist);
@@ -318,11 +386,17 @@ const signMaterial = new THREE.MeshBasicMaterial({
   side: THREE.DoubleSide,
 });
 
+// Low-poly faceted cone — the tapered spire / angled roof shape, deliberately
+// low-segment for a stylized rather than smooth-realistic silhouette.
+const roofCapGeometry = new THREE.ConeGeometry(1, 1, 6);
+const roofCapMaterial = new THREE.MeshStandardMaterial({ color: '#141230', roughness: 0.75 });
+
 export function Buildings({ featureFrame }: SceneProps) {
   const segmentsMeshRef = useRef<THREE.InstancedMesh>(null!);
   const antennaMeshRef = useRef<THREE.InstancedMesh>(null!);
   const machineryMeshRef = useRef<THREE.InstancedMesh>(null!);
   const signMeshRef = useRef<THREE.InstancedMesh>(null!);
+  const roofCapMeshRef = useRef<THREE.InstancedMesh>(null!);
 
   const layout = useMemo(() => generateSkyline(), []);
   const material = useMemo(() => new BuildingMaterial(), []);
@@ -379,6 +453,15 @@ export function Buildings({ featureFrame }: SceneProps) {
     });
     signMeshRef.current.instanceMatrix.needsUpdate = true;
     if (signMeshRef.current.instanceColor) signMeshRef.current.instanceColor.needsUpdate = true;
+
+    layout.roofCaps.forEach((r, i) => {
+      dummy.position.set(r.x, r.y + r.height / 2, r.z);
+      dummy.rotation.set(0, r.rotationY, 0);
+      dummy.scale.set(r.radius, r.height, r.radius);
+      dummy.updateMatrix();
+      roofCapMeshRef.current.setMatrixAt(i, dummy.matrix);
+    });
+    roofCapMeshRef.current.instanceMatrix.needsUpdate = true;
   }, [layout]);
 
   useFrame((state, rawDelta) => {
@@ -420,6 +503,11 @@ export function Buildings({ featureFrame }: SceneProps) {
       <instancedMesh
         ref={signMeshRef}
         args={[signGeometry, signMaterial, layout.signs.length]}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={roofCapMeshRef}
+        args={[roofCapGeometry, roofCapMaterial, layout.roofCaps.length]}
         frustumCulled={false}
       />
     </>

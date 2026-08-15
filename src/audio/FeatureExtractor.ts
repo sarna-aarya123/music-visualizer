@@ -54,6 +54,7 @@ export class FeatureExtractor {
   private fluxVariance = 0;
   private timeSinceLastBeat = 10;
   private beatCounter = 0;
+  private lastBeatTimestamp = -999;
 
   constructor(private analyser: AnalyserNode, sampleRate: number) {
     this.freqData = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
@@ -125,6 +126,16 @@ export class FeatureExtractor {
       this.timeSinceLastBeat = 0;
       frame.beatId = this.beatCounter;
       frame.beatIntensity = clamp01(0.35 + (flux - adaptiveThreshold) / (adaptiveThreshold + 0.05));
+
+      // Live tempo estimate: smooth the raw gap between this beat and the
+      // last one, ignoring implausible gaps (missed detections / a single
+      // stray double-trigger) so it tracks the song's actual pace.
+      const rawInterval = time - this.lastBeatTimestamp;
+      if (rawInterval > 0.15 && rawInterval < 2.5) {
+        frame.beatInterval = expSmooth(frame.beatInterval, rawInterval, 3, rawInterval);
+      }
+      this.lastBeatTimestamp = time;
+
       frame.beatTime = time;
       frame.kickImpulse = 1;
     } else {
