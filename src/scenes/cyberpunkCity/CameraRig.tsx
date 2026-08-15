@@ -6,7 +6,6 @@ import { consumeBeat, consumeEvent, consumeSnareHit, createBeatConsumerState } f
 import {
   applyBeatBurst,
   applyMajorLaunch,
-  applySnareBurst,
   createSpeedState,
   MAX_SPEED_CAP,
   stepSpeed,
@@ -18,6 +17,10 @@ const EYE_HEIGHT = 3.2;
 const BASE_FOV = 52;
 const LOOK_AHEAD = 16;
 
+/** Beat intensity has to cross this bar to count as a "strong 808" worth a
+ *  speed burst — most beats should only ever produce camera impact. */
+const STRONG_BEAT_BAR = 0.72;
+
 /**
  * The camera is a rider on the route, not a free body. Its only degrees of
  * freedom are: `t` (progress around the closed loop, driven entirely by
@@ -27,10 +30,14 @@ const LOOK_AHEAD = 16;
  * flying through geometry and orientation flips structurally impossible
  * rather than just unlikely.
  *
- * Hierarchy of reactions (matching what should be most visible first):
- * 1) speed — every beat/snare/major-event surges the actual travel speed,
- *    a real trajectory change, not decoration; 2) banking harder into
- *    turns on strong beats; 3) a secondary shake/FOV punch on top.
+ * Reaction hierarchy, deliberately NOT "every beat accelerates the
+ * camera": most beats only ever produce shake/FOV/bank (camera impact);
+ * only a strong beat (a real 808/kick, not just any bass onset) adds a
+ * short speed burst; the big speed swings come from section-level drop/
+ * breakdown events inside musicController's `sectionMultiplier`, not from
+ * individual beats at all. Snare/clap is a distinct sharp lateral snap,
+ * not a speed effect — a different musical element should produce a
+ * visibly different kind of camera reaction.
  */
 export function CameraRig({ featureFrame, route }: SceneProps) {
   const { camera } = useThree();
@@ -44,6 +51,7 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
   const smoothedUp = useRef(new THREE.Vector3(0, 1, 0));
   const prevTangent = useRef<THREE.Vector3 | null>(null);
   const lateralOffset = useRef(0);
+  const snareSnap = useRef(0);
 
   const impactShake = useRef(0);
   const impactFov = useRef(0);
@@ -55,26 +63,25 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     const f = featureFrame;
     const elapsed = state.clock.elapsedTime;
 
-    // --- Music drives speed FIRST — trajectory before decoration. --------
+    // --- Beat: camera impact always; a speed burst only for strong hits.
     const beatHit = consumeBeat(f, beatState);
     if (beatHit > 0) {
-      applyBeatBurst(speed, beatHit);
+      if (beatHit > STRONG_BEAT_BAR) applyBeatBurst(speed, beatHit);
       impactShake.current = Math.max(impactShake.current, beatHit);
       impactFov.current = Math.max(impactFov.current, beatHit * 9);
       beatBank.current += (Math.random() < 0.5 ? -1 : 1) * beatHit * 0.22;
     }
 
-    // Snare/clap: a sharper, quicker camera "snap" distinct from the
-    // bass-driven surge — its own smaller speed nudge plus a fast punch.
+    // --- Snare/clap: a sharp, directional lateral snap — a visibly
+    // different kind of reaction from the bass punch, and no speed change
+    // at all (this is a maneuver, not a boost).
     const snareHit = consumeSnareHit(f, snareState);
     if (snareHit > 0) {
-      applySnareBurst(speed, snareHit);
-      impactShake.current = Math.max(impactShake.current, snareHit * 0.7);
-      impactFov.current = Math.max(impactFov.current, snareHit * 6);
+      snareSnap.current += (Math.random() < 0.5 ? -1 : 1) * snareHit * 2.2;
+      impactFov.current = Math.max(impactFov.current, snareHit * 5);
     }
 
-    // Major event: consumed exactly once at the moment it enters 'impact'
-    // — a launch far beyond anything a single beat produces.
+    // --- Major event: the one place a truly large launch happens.
     const majorHit = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorState);
     if (majorHit > 0) {
       applyMajorLaunch(speed, majorHit);
@@ -82,7 +89,9 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
       impactFov.current = Math.max(impactFov.current, majorHit * 18);
     }
 
-    stepSpeed(speed, dt, f.energy);
+    // Structural drop/breakdown events (consumed inside stepSpeed) are
+    // what actually drive the big cruise -> fast-section -> settle curve.
+    stepSpeed(speed, dt, f);
     cameraMotionState.speed = speed.current;
 
     // --- Advance along the route (arc-length based: speed is in real
@@ -97,6 +106,7 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     const weaveTarget =
       Math.sin(elapsed * 0.35) * Math.min(corridorRadius * 0.3, 3) * (0.3 + f.mid * 0.7);
     lateralOffset.current += (weaveTarget - lateralOffset.current) * (1 - Math.exp(-dt * 1.6));
+    snareSnap.current *= Math.exp(-dt * 7);
 
     const decay = Math.exp(-dt * 8);
     impactShake.current *= decay;
@@ -104,9 +114,12 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     beatBank.current *= Math.exp(-dt * 3.5);
     const shakeMag = impactShake.current * 0.32;
 
+    const maxLateral = corridorRadius - 1.5;
+    const totalLateral = THREE.MathUtils.clamp(lateralOffset.current + snareSnap.current, -maxLateral, maxLateral);
+
     const position = frame.position
       .clone()
-      .addScaledVector(frame.right, lateralOffset.current + (Math.random() - 0.5) * shakeMag)
+      .addScaledVector(frame.right, totalLateral + (Math.random() - 0.5) * shakeMag)
       .addScaledVector(frame.up, EYE_HEIGHT + (Math.random() - 0.5) * shakeMag * 0.5);
     camera.position.copy(position);
 
@@ -124,7 +137,7 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     }
     prevTangent.current = frame.tangent.clone();
 
-    const bank = THREE.MathUtils.clamp(curvatureBank + beatBank.current, -0.42, 0.42);
+    const bank = THREE.MathUtils.clamp(curvatureBank + beatBank.current - snareSnap.current * 0.05, -0.42, 0.42);
     const bankedUp = smoothedUp.current.clone().applyAxisAngle(frame.tangent, bank);
     camera.up.copy(bankedUp);
     camera.lookAt(position.clone().addScaledVector(frame.tangent, LOOK_AHEAD));
@@ -132,7 +145,7 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     // --- FOV: base + speed-driven widening (a classic speed cue) + beat
     // punch on top.
     const speedFrac = THREE.MathUtils.clamp(speed.current / MAX_SPEED_CAP, 0, 1);
-    const targetFov = BASE_FOV + speedFrac * 12 + impactFov.current;
+    const targetFov = BASE_FOV + speedFrac * 14 + impactFov.current;
     currentFov.current += (targetFov - currentFov.current) * (1 - Math.exp(-dt * 11));
     if (camera instanceof THREE.PerspectiveCamera) {
       camera.fov = currentFov.current;

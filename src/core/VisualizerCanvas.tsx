@@ -1,6 +1,7 @@
 import { useRef } from 'react';
+import * as THREE from 'three';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { EffectComposer, Bloom, Vignette, Noise } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, Vignette, Noise, ChromaticAberration } from '@react-three/postprocessing';
 import { FeatureUpdater } from './FeatureUpdater';
 import { CyberpunkCityScene } from '../scenes/cyberpunkCity/CyberpunkCityScene';
 import { featureFrame } from '../audio/featureFrame';
@@ -21,6 +22,8 @@ function PostFX() {
   const bloomRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const vignetteRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chromaticRef = useRef<any>(null);
   const pulse = useRef(0);
   const beatState = useRef(createBeatConsumerState()).current;
 
@@ -38,6 +41,10 @@ function PostFX() {
     if (vignetteRef.current) {
       vignetteRef.current.darkness = Math.max(0.15, 0.9 - majorEnvelope * 0.85);
     }
+    if (chromaticRef.current) {
+      const shift = majorEnvelope * 0.006;
+      chromaticRef.current.offset.set(shift, shift * 0.6);
+    }
   });
 
   return (
@@ -50,6 +57,12 @@ function PostFX() {
         mipmapBlur
       />
       <Vignette ref={vignetteRef} eskil={false} offset={0.25} darkness={0.9} />
+      <ChromaticAberration
+        ref={chromaticRef}
+        offset={new THREE.Vector2(0, 0)}
+        radialModulation={false}
+        modulationOffset={0}
+      />
       <Noise opacity={0.02} />
     </EffectComposer>
   );
@@ -58,7 +71,7 @@ function PostFX() {
 export function VisualizerCanvas() {
   return (
     <Canvas
-      camera={{ position: [0, 5.5, 8], fov: 52, near: 0.1, far: 1000 }}
+      camera={{ position: [0, 5.5, 8], fov: 52, near: 0.1, far: 1400 }}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       dpr={[1, 1.75]}
     >

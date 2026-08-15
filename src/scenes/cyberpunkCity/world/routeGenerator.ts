@@ -8,7 +8,15 @@ import { createRng, rngRange, type Rng } from './seededRandom';
  * camera can go; this is the single source of truth for that.
  */
 
-export type District = 'downtown' | 'boulevard' | 'towerDistrict' | 'plaza' | 'industrial' | 'bridge';
+export type District =
+  | 'downtown'
+  | 'boulevard'
+  | 'towerDistrict'
+  | 'plaza'
+  | 'industrial'
+  | 'bridge'
+  | 'tunnel'
+  | 'canyon';
 
 export interface DistrictProfile {
   corridorRadius: number;
@@ -24,12 +32,28 @@ export const DISTRICT_PROFILES: Record<District, DistrictProfile> = {
   plaza: { corridorRadius: 26, heightBias: -2, buildingDensity: 0.22, heightRange: [4, 10] },
   industrial: { corridorRadius: 10, heightBias: -3, buildingDensity: 0.55, heightRange: [4, 12] },
   bridge: { corridorRadius: 8, heightBias: 17, buildingDensity: 0.15, heightRange: [3, 8] },
+  // A very tight, very tall, very dense corridor — no literal tunnel tube,
+  // but close/tall/dense-enough geometry pressing in on both sides reads
+  // as a compressed, enclosed passage as the camera rushes through it.
+  tunnel: { corridorRadius: 4.5, heightBias: 6, buildingDensity: 0.95, heightRange: [14, 26] },
+  // Narrow but sparse and very tall — dramatic, canyon-like verticality
+  // rather than a dense street.
+  canyon: { corridorRadius: 6, heightBias: 10, buildingDensity: 0.35, heightRange: [22, 42] },
 };
 
-const ALL_DISTRICTS: District[] = ['downtown', 'boulevard', 'towerDistrict', 'plaza', 'industrial', 'bridge'];
+const ALL_DISTRICTS: District[] = [
+  'downtown',
+  'boulevard',
+  'towerDistrict',
+  'plaza',
+  'industrial',
+  'bridge',
+  'tunnel',
+  'canyon',
+];
 
-const ANCHOR_COUNT = 22;
-const BASE_RADIUS = 190;
+const ANCHOR_COUNT = 30;
+const BASE_RADIUS = 260;
 const RADIUS_JITTER = 0.24;
 const ANGLE_JITTER = 0.09;
 // Route slope is capped so the tangent never approaches vertical — this is

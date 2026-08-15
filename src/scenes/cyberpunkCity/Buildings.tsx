@@ -22,6 +22,7 @@ const BuildingMaterial = shaderMaterial(
     uHigh: 0,
     uPulse: 0,
     uCameraPos: new THREE.Vector3(),
+    uLightDir: new THREE.Vector3(20, 30, -10).normalize(),
     uFogColor: new THREE.Color('#05030c'),
     uColorBase: new THREE.Color('#0a0e24'),
     uColorWindow: new THREE.Color('#ffb35c'),
@@ -40,8 +41,9 @@ const BuildingMaterial = shaderMaterial(
       vUv = uv;
       vSeed = aSeed;
       vec3 pos = position;
-      // Subtle global "breathing" on bass rather than per-instance CPU work.
-      pos.y *= 1.0 + uBass * 0.015;
+      // Global "breathing" on bass — big enough to actually read as the
+      // world pulsing with the music, not a barely-perceptible wobble.
+      pos.y *= 1.0 + uBass * 0.045;
       vec4 worldPos = modelMatrix * instanceMatrix * vec4(pos, 1.0);
       vWorldPos = worldPos.xyz;
       vNormalW = normalize(mat3(instanceMatrix) * normal);
@@ -54,7 +56,9 @@ const BuildingMaterial = shaderMaterial(
     uniform float uEnergy;
     uniform float uHigh;
     uniform float uPulse;
+    uniform float uBass;
     uniform vec3 uCameraPos;
+    uniform vec3 uLightDir;
     uniform vec3 uFogColor;
     uniform vec3 uColorBase;
     uniform vec3 uColorWindow;
@@ -91,26 +95,33 @@ const BuildingMaterial = shaderMaterial(
 
       float glow = clamp(lit + flicker, 0.0, 1.0) * (1.0 + uPulse * 1.4);
 
-      // Posterized facade shading — a few flat brightness bands rather than
-      // a smooth gradient, for an illustrative/game-like surface instead of
-      // a physically-simulated one.
-      float band = floor(vUv.y * 4.0) / 4.0;
-      vec3 shade = uColorBase * (0.3 + 0.55 * band);
+      // Cel/toon shading: hard-banded lighting from face orientation
+      // relative to the key light, instead of a smooth gradient — this is
+      // what actually reads as "stylized game render" rather than
+      // "realistic 3D building". Combined with the existing vertical
+      // posterization for a genuine light/dark PLANE per face, not per
+      // pixel.
+      float ndotl = dot(normalize(vNormalW), normalize(uLightDir));
+      float toonBand = ndotl > 0.4 ? 1.0 : (ndotl > -0.05 ? 0.6 : 0.32);
+      float heightBand = floor(vUv.y * 4.0) / 4.0;
+      vec3 shade = uColorBase * (0.32 + 0.5 * heightBand) * toonBand;
 
       // Cool-dominant, warm-accent composition: most windows are the warm
       // amber accent color; a minority of buildings use the cool cyan
       // accent instead, giving color separation rather than one uniform
-      // "everything neon" wash.
+      // "everything neon" wash. Strong bass shifts the whole facade
+      // slightly warmer — buildings as instruments, not just scenery.
       vec3 windowColor = mix(uColorWindow, uColorAccent, step(0.72, fract(vSeed * 5.2)));
       windowColor = mix(windowColor, vec3(1.0, 0.85, 0.6), uPulse * 0.7);
       vec3 col = mix(shade, windowColor, clamp(glow, 0.0, 1.0) * (0.65 + 0.5 * uEnergy));
+      col = mix(col, col * vec3(1.15, 1.0, 0.85), clamp(uBass * 1.3, 0.0, 0.5));
 
       // Stylized rim light — silhouette edges facing the camera pick up a
-      // cool highlight, the anime "backlit" look, rather than physically
-      // based specular.
+      // strong cool highlight, the anime "backlit" look, rather than
+      // physically based specular.
       vec3 viewDir = normalize(uCameraPos - vWorldPos);
-      float fresnel = pow(1.0 - clamp(dot(normalize(vNormalW), viewDir), 0.0, 1.0), 2.5);
-      col += uColorAccent * fresnel * 0.4 * (0.4 + 0.6 * uEnergy);
+      float fresnel = pow(1.0 - clamp(dot(normalize(vNormalW), viewDir), 0.0, 1.0), 2.2);
+      col += uColorAccent * fresnel * 0.65 * (0.5 + 0.5 * uEnergy);
 
       float dist = length(uCameraPos - vWorldPos);
       float fogAmount = smoothstep(28.0, 130.0, dist);
@@ -164,7 +175,7 @@ export function Buildings({ featureFrame, world }: SceneProps) {
 
     world.segments.forEach((s, i) => {
       dummy.position.set(s.x, s.y, s.z);
-      dummy.rotation.set(0, s.rotationY, 0);
+      dummy.rotation.set(s.tiltX ?? 0, s.rotationY, s.tiltZ ?? 0);
       dummy.scale.set(s.sx, s.sy, s.sz);
       dummy.updateMatrix();
       segmentsMeshRef.current.setMatrixAt(i, dummy.matrix);
