@@ -1,0 +1,92 @@
+.app-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #05030c;
+}
+
+.ui-overlay {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+  font-family: system-ui, sans-serif;
+  color: #e8e8ff;
+}
+
+.panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(10, 8, 24, 0.65);
+  border: 1px solid rgba(140, 130, 255, 0.25);
+  backdrop-filter: blur(6px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.panel button {
+  background: rgba(126, 249, 255, 0.12);
+  border: 1px solid rgba(126, 249, 255, 0.4);
+  color: #cdf9ff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.panel button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.filename {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+.error {
+  color: #ff8a8a;
+}
+
+.transport {
+  min-width: 260px;
+}
+
+.progress-track {
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #7ef9ff;
+}
+
+.time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+.fullscreen-btn {
+  align-self: flex-start;
+  background: rgba(10, 8, 24, 0.65);
+  border: 1px solid rgba(140, 130, 255, 0.25);
+  color: #e8e8ff;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
