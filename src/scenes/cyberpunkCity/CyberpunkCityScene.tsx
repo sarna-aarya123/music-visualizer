@@ -5,6 +5,7 @@ import { CityAtmosphere } from './CityAtmosphere';
 import { BackgroundSkyline } from './BackgroundSkyline';
 import { Ground } from './Ground';
 import { Buildings } from './Buildings';
+import { Landmarks } from './Landmarks';
 import { StreetProps } from './StreetProps';
 import { Particles } from './Particles';
 import { generateRoute } from './world/routeGenerator';
@@ -30,6 +31,7 @@ export function CyberpunkCityScene({ featureFrame }: { featureFrame: AudioFeatur
       <BackgroundSkyline featureFrame={featureFrame} route={route} world={world} />
       <Ground featureFrame={featureFrame} route={route} world={world} />
       <Buildings featureFrame={featureFrame} route={route} world={world} />
+      <Landmarks featureFrame={featureFrame} route={route} world={world} />
       <StreetProps featureFrame={featureFrame} route={route} world={world} />
       <Particles featureFrame={featureFrame} route={route} world={world} />
     </>

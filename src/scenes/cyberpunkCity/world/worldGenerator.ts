@@ -27,6 +27,24 @@ const DISTRICT_FLAVORS: Record<District, DistrictFlavor> = {
 };
 
 /**
+ * District color identity (see Buildings.tsx's fragment shader): 0 = the
+ * default cool downtown palette, 0.5 = a warm industrial rust/orange
+ * palette, 1 = a vivid canyon/plaza magenta palette. Three families,
+ * deliberately not one per district — the point is a handful of
+ * recognizable moods, not a rainbow.
+ */
+const DISTRICT_HUES: Record<District, number> = {
+  downtown: 0,
+  boulevard: 0,
+  towerDistrict: 0,
+  bridge: 0,
+  tunnel: 0,
+  industrial: 0.5,
+  plaza: 1,
+  canyon: 1,
+};
+
+/**
  * Walks the route and places every piece of world geometry *relative to
  * it* — always starting at or beyond that sample's corridor radius. This
  * is the "build the world around the route" guarantee: geometry is never
@@ -49,6 +67,8 @@ export interface Segment {
   sy: number;
   sz: number;
   seed: number;
+  /** 0/0.5/1 district color family — see DISTRICT_HUES. */
+  hueShift?: number;
 }
 
 export interface Antenna {
@@ -89,12 +109,38 @@ export interface RoofCap {
   rotationY: number;
 }
 
+/** A glowing ring landmark, standing upright beside/over the corridor —
+ *  genuinely different geometry (a torus) from every box-based shape
+ *  elsewhere, deliberately reserved for a handful of moments. */
+export interface ReactorRing {
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  tube: number;
+  rotationY: number;
+}
+
+/** A colossal freestanding spire, towering far above normal building
+ *  height — a landmark meant to be recognizable from a distance, not
+ *  another roof cap. */
+export interface GiantSpire {
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  height: number;
+  rotationY: number;
+}
+
 export interface WorldLayout {
   segments: Segment[];
   antennas: Antenna[];
   machinery: Machinery[];
   signs: Sign[];
   roofCaps: RoofCap[];
+  reactorRings: ReactorRing[];
+  giantSpires: GiantSpire[];
 }
 
 const ANTENNA_COLORS = ['#ff5577', '#ffe08a', '#8fd8ff'];
@@ -114,9 +160,10 @@ function pushSegment(
   w: number,
   d: number,
   h: number,
-  seed: number
+  seed: number,
+  hueShift = 0
 ): void {
-  segments.push({ x: cx, y: cy, z: cz, rotationY, sx: w, sy: h, sz: d, seed });
+  segments.push({ x: cx, y: cy, z: cz, rotationY, sx: w, sy: h, sz: d, seed, hueShift });
 }
 
 interface BuiltBuilding {
@@ -135,7 +182,8 @@ function buildBuilding(
   base: THREE.Vector3,
   rotationY: number,
   heightRange: [number, number],
-  segments: Segment[]
+  segments: Segment[],
+  hueShift = 0
 ): BuiltBuilding {
   const seed = rng();
   const isLowRise = rng() < 0.22;
@@ -158,11 +206,12 @@ function buildBuilding(
     width + 1.4,
     depth + 1.4,
     foundationHeight,
-    seed
+    seed,
+    hueShift
   );
 
   let y = base.y + foundationHeight;
-  pushSegment(segments, base.x, y + height / 2, base.z, rotationY, width, depth, height, seed);
+  pushSegment(segments, base.x, y + height / 2, base.z, rotationY, width, depth, height, seed, hueShift);
   y += height;
 
   let cx = base.x;
@@ -186,7 +235,7 @@ function buildBuilding(
     cx = base.x + (rng() - 0.5) * 2 * maxOffX;
     cz = base.z + (rng() - 0.5) * 2 * maxOffZ;
 
-    pushSegment(segments, cx, y + h / 2, cz, rotationY, w, d, h, seed);
+    pushSegment(segments, cx, y + h / 2, cz, rotationY, w, d, h, seed, hueShift);
     y += h;
     prevW = w;
     prevD = d;
@@ -203,7 +252,18 @@ function buildBuilding(
     // cantilevers sensibly even when the building itself is yawed.
     const offsetX = Math.cos(rotationY) * offsetLocalX;
     const offsetZ = -Math.sin(rotationY) * offsetLocalX;
-    pushSegment(segments, base.x + offsetX, platformY, base.z + offsetZ, rotationY, platformW, 0.5, platformD, seed);
+    pushSegment(
+      segments,
+      base.x + offsetX,
+      platformY,
+      base.z + offsetZ,
+      rotationY,
+      platformW,
+      0.5,
+      platformD,
+      seed,
+      hueShift
+    );
   }
 
   return { topWidth: prevW, topDepth: prevD, topCx: cx, topCy: y, topCz: cz };
@@ -267,6 +327,15 @@ function buildGateway(
   );
 }
 
+/** Which of the small set of landmark archetypes fits this district best.
+ *  Deliberately few options, reused deliberately — "5 amazing landmarks"
+ *  beats fifty near-identical ones. */
+function pickLandmarkKind(rng: Rng, district: District): 'gateway' | 'reactorRing' | 'giantSpire' {
+  if (district === 'industrial') return rng() < 0.7 ? 'reactorRing' : 'gateway';
+  if (district === 'towerDistrict' || district === 'canyon') return rng() < 0.7 ? 'giantSpire' : 'gateway';
+  return 'gateway';
+}
+
 export function generateWorld(route: RouteData, seed: number): WorldLayout {
   const rng = createRng(seed ^ 0x9e3779b9);
 
@@ -275,11 +344,34 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
   const machinery: Machinery[] = [];
   const signs: Sign[] = [];
   const roofCaps: RoofCap[] = [];
+  const reactorRings: ReactorRing[] = [];
+  const giantSpires: GiantSpire[] = [];
 
   route.anchors.forEach((anchor, index) => {
     if (!anchor.isLandmark) return;
     const frame = route.getFrameAt(index / route.anchors.length);
-    buildGateway(rng, frame.position, frame.right, anchor.corridorRadius, segments);
+    const kind = pickLandmarkKind(rng, anchor.district);
+
+    if (kind === 'reactorRing') {
+      const radius = 12 + rng() * 6;
+      reactorRings.push({
+        x: frame.position.x,
+        y: frame.position.y + radius + 8,
+        z: frame.position.z,
+        radius,
+        tube: 1.3 + rng() * 0.7,
+        rotationY: Math.atan2(-frame.tangent.z, frame.tangent.x),
+      });
+    } else if (kind === 'giantSpire') {
+      const side = rng() < 0.5 ? -1 : 1;
+      const radius = 6 + rng() * 4;
+      const height = 55 + rng() * 45;
+      const offset = anchor.corridorRadius + radius + 5;
+      const pos = frame.position.clone().addScaledVector(frame.right, side * offset);
+      giantSpires.push({ x: pos.x, y: pos.y, z: pos.z, radius, height, rotationY: rng() * Math.PI });
+    } else {
+      buildGateway(rng, frame.position, frame.right, anchor.corridorRadius, segments);
+    }
   });
 
   for (let i = 0; i < SAMPLE_COUNT; i++) {
@@ -288,6 +380,7 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
     const { district, corridorRadius } = route.getDistrictInfoAt(t);
     const profile = DISTRICT_PROFILES[district];
     const flavor = DISTRICT_FLAVORS[district];
+    const hueShift = DISTRICT_HUES[district];
 
     for (const side of [-1, 1] as const) {
       if (rng() >= profile.buildingDensity) continue;
@@ -296,7 +389,7 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
       const base = frame.position.clone().addScaledVector(frame.right, side * lateral);
       const rotationY = Math.atan2(-frame.right.z, frame.right.x) + (rng() - 0.5) * 0.3;
 
-      const built = buildBuilding(rng, base, rotationY, profile.heightRange, segments);
+      const built = buildBuilding(rng, base, rotationY, profile.heightRange, segments, hueShift);
 
       if (built.topCy - base.y > 9 && rng() < 0.42) {
         const roofRoll = rng();
@@ -340,6 +433,7 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
             sy: 0.6,
             sz: wedgeD,
             seed: rng(),
+            hueShift,
           });
         }
       }
@@ -383,5 +477,5 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
     }
   }
 
-  return { segments, antennas, machinery, signs, roofCaps };
+  return { segments, antennas, machinery, signs, roofCaps, reactorRings, giantSpires };
 }
