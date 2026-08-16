@@ -15,6 +15,7 @@ const TERRAIN_WIDTH = 45;
 
 const GroundMaterial = shaderMaterial(
   {
+    uTime: 0,
     uBass: 0,
     uEnergy: 0,
     uGridScale: 0.08,
@@ -37,6 +38,7 @@ const GroundMaterial = shaderMaterial(
   `,
   // fragment
   /* glsl */ `
+    uniform float uTime;
     uniform float uBass;
     uniform float uEnergy;
     uniform float uGridScale;
@@ -55,6 +57,11 @@ const GroundMaterial = shaderMaterial(
       float line = 1.0 - smoothstep(0.0, 0.03 + uBass * 0.015, lineDist);
 
       vec3 col = mix(uBaseColor, uLineColor, line * (0.55 + 0.45 * uEnergy));
+
+      // A slow, always-on energy pulse through the grid lines — the road
+      // stays visibly alive between beats rather than sitting static.
+      float flow = 0.85 + 0.15 * sin(uTime * 0.5 + vWorldPos.x * 0.015 + vWorldPos.z * 0.015);
+      col *= mix(1.0, flow, line);
 
       // Impact ring expanding outward from under the camera (in full 3D so
       // it still reads correctly on elevated/sloped route sections),
@@ -206,12 +213,14 @@ export function Ground({ featureFrame, route }: SceneProps) {
     }
 
     const u = material.uniforms;
+    u.uTime.value = t;
     u.uBass.value = featureFrame.bass;
     u.uEnergy.value = featureFrame.energy;
     u.uImpactAge.value = t - impactStartTime.current;
     u.uImpactStrength.value = impactStrength.current;
     (u.uCameraPos.value as THREE.Vector3).copy(state.camera.position);
 
+    terrainMaterial.uniforms.uTime.value = t;
     terrainMaterial.uniforms.uBass.value = featureFrame.bass;
     terrainMaterial.uniforms.uEnergy.value = featureFrame.energy * 0.4;
     (terrainMaterial.uniforms.uCameraPos.value as THREE.Vector3).copy(state.camera.position);

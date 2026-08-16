@@ -1,6 +1,30 @@
 import * as THREE from 'three';
 import { createRng, type Rng } from './seededRandom';
-import { DISTRICT_PROFILES, type RouteData } from './routeGenerator';
+import { DISTRICT_PROFILES, type District, type RouteData } from './routeGenerator';
+
+/**
+ * A light-touch "district character" layer: rather than a wholly separate
+ * geometry generator per archetype (cyberpunk tower / industrial / plaza /
+ * anime tower), each district biases the SAME shape-family probabilities
+ * so buildings still read as belonging to a place — industrial areas lean
+ * toward exposed rooftop machinery and angled factory-style wedge roofs,
+ * tower districts and canyons lean toward tall elegant spires.
+ */
+interface DistrictFlavor {
+  machineryBoost: number;
+  wedgeBias: number;
+}
+
+const DISTRICT_FLAVORS: Record<District, DistrictFlavor> = {
+  downtown: { machineryBoost: 1, wedgeBias: 0 },
+  boulevard: { machineryBoost: 0.7, wedgeBias: 0 },
+  towerDistrict: { machineryBoost: 0.8, wedgeBias: -0.15 },
+  plaza: { machineryBoost: 0.5, wedgeBias: 0.1 },
+  industrial: { machineryBoost: 2.2, wedgeBias: 0.25 },
+  bridge: { machineryBoost: 0.6, wedgeBias: 0 },
+  tunnel: { machineryBoost: 1.4, wedgeBias: 0.1 },
+  canyon: { machineryBoost: 0.6, wedgeBias: -0.2 },
+};
 
 /**
  * Walks the route and places every piece of world geometry *relative to
@@ -263,6 +287,7 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
     const frame = route.getFrameAt(t);
     const { district, corridorRadius } = route.getDistrictInfoAt(t);
     const profile = DISTRICT_PROFILES[district];
+    const flavor = DISTRICT_FLAVORS[district];
 
     for (const side of [-1, 1] as const) {
       if (rng() >= profile.buildingDensity) continue;
@@ -275,7 +300,9 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
 
       if (built.topCy - base.y > 9 && rng() < 0.42) {
         const roofRoll = rng();
-        if (roofRoll < 0.38) {
+        const spireThreshold = 0.38 - flavor.wedgeBias;
+        const pyramidThreshold = 0.62 - flavor.wedgeBias * 0.6;
+        if (roofRoll < spireThreshold) {
           // Spire/cone — the existing tapered-tower cap.
           roofCaps.push({
             x: built.topCx,
@@ -285,7 +312,7 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
             height: 3 + rng() * 5.5,
             rotationY: rotationY + rng() * Math.PI,
           });
-        } else if (roofRoll < 0.62) {
+        } else if (roofRoll < pyramidThreshold) {
           // Small pyramidal cap — the wider, shorter variant.
           roofCaps.push({
             x: built.topCx,
@@ -328,7 +355,7 @@ export function generateWorld(route: RouteData, seed: number): WorldLayout {
         });
       }
 
-      if (rng() < 0.35) {
+      if (rng() < 0.35 * flavor.machineryBoost) {
         machinery.push({
           x: built.topCx + (rng() - 0.5) * built.topWidth * 0.4,
           y: built.topCy + 0.3,

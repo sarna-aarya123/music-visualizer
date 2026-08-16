@@ -5,7 +5,7 @@ import { shaderMaterial, Stars } from '@react-three/drei';
 import type { SceneProps } from '../types';
 import { FOG_COLOR } from './layout';
 import { consumeBeat, createBeatConsumerState } from '../../audio/beatConsumer';
-import { getMajorEventEnvelope } from './world/musicEventDirector';
+import { getMajorEventEnvelope, majorEventState, PHASE_DURATIONS } from './world/musicEventDirector';
 
 const AMBIENT_BASE = 0.35;
 const DIRECTIONAL_BASE = 0.35;
@@ -76,8 +76,11 @@ const SkyMaterial = shaderMaterial(
       float moonGlow = pow(clamp(moonDot, 0.0, 1.0), 30.0) * 0.5;
       col += uMoonColor * (moonDisc * 1.4 + moonGlow);
 
+      // A slow, always-on shimmer on the horizon glow — atmosphere that's
+      // visibly alive even with the camera calm and the music quiet.
+      float shimmer = 0.9 + 0.1 * sin(uTime * 0.25);
       float horizonGlow = pow(1.0 - abs(vDir.y), 6.0);
-      col += uGlowColor * horizonGlow * (0.3 + 0.4 * uEnergy);
+      col += uGlowColor * horizonGlow * (0.3 + 0.4 * uEnergy) * shimmer;
 
       gl_FragColor = vec4(col, 1.0);
     }
@@ -118,9 +121,19 @@ export function CityAtmosphere({ featureFrame }: SceneProps) {
     if (beatHit > 0) flash.current = Math.max(flash.current, beatHit);
     flash.current *= Math.exp(-dt * 6);
 
+    // A brief "breath before the hit": lighting dips slightly through the
+    // anticipation phase, right before the flash lands — a deliberate
+    // cinematic transition (category C), not a random dim.
+    let anticipationDip = 0;
+    if (majorEventState.phase === 'anticipation') {
+      anticipationDip = (1 - majorEventState.phaseTime / PHASE_DURATIONS.anticipation) * majorEventState.intensity * 0.35;
+    }
+
     const totalFlash = flash.current + majorEnvelope * 3;
-    if (ambientRef.current) ambientRef.current.intensity = AMBIENT_BASE + totalFlash * 0.6;
-    if (directionalRef.current) directionalRef.current.intensity = DIRECTIONAL_BASE + totalFlash * 0.75;
+    if (ambientRef.current) ambientRef.current.intensity = AMBIENT_BASE + totalFlash * 0.6 - anticipationDip * 0.5;
+    if (directionalRef.current) {
+      directionalRef.current.intensity = DIRECTIONAL_BASE + totalFlash * 0.75 - anticipationDip * 0.6;
+    }
   });
 
   return (

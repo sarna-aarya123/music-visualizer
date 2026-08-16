@@ -133,7 +133,7 @@ const BuildingMaterial = shaderMaterial(
 );
 
 const antennaGeometry = new THREE.CylinderGeometry(0.05, 0.09, 1, 6);
-const antennaMaterial = new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false });
+const antennaMaterial = new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false, transparent: true });
 
 const machineryGeometry = new THREE.BoxGeometry(1, 1, 1);
 const machineryMaterial = new THREE.MeshStandardMaterial({ color: '#0c0b1a', roughness: 0.9 });
@@ -142,6 +142,7 @@ const signGeometry = new THREE.PlaneGeometry(1, 1);
 const signMaterial = new THREE.MeshBasicMaterial({
   color: '#ffffff',
   toneMapped: false,
+  transparent: true,
   side: THREE.DoubleSide,
 });
 
@@ -223,8 +224,11 @@ export function Buildings({ featureFrame, world }: SceneProps) {
     roofCapMeshRef.current.instanceMatrix.needsUpdate = true;
   }, [world]);
 
+  const machineryDummy = useRef(new THREE.Object3D()).current;
+
   useFrame((state, rawDelta) => {
     const dt = Math.min(rawDelta, 0.05);
+    const elapsed = state.clock.elapsedTime;
 
     // Beat/snare → illumination pulse: consumed exactly once per event,
     // then decays smoothly — every detected hit visibly brightens the
@@ -237,12 +241,29 @@ export function Buildings({ featureFrame, world }: SceneProps) {
     pulse.current *= Math.exp(-dt * 6);
 
     const u = material.uniforms;
-    u.uTime.value = state.clock.elapsedTime;
+    u.uTime.value = elapsed;
     u.uBass.value = featureFrame.bass;
     u.uEnergy.value = featureFrame.energy;
     u.uHigh.value = featureFrame.high + featureFrame.hihatIntensity * 0.3;
     u.uPulse.value = Math.max(pulse.current, getMajorEventEnvelope());
     (u.uCameraPos.value as THREE.Vector3).copy(state.camera.position);
+
+    // The world stays visibly alive even with the camera calm and the
+    // music quiet: rooftop machinery continuously rotates, antenna/sign
+    // lights continuously pulse — always-on animation loops, independent
+    // of any audio event.
+    world.machinery.forEach((m, i) => {
+      const spinSpeed = 0.3 + (i % 5) * 0.15;
+      machineryDummy.position.set(m.x, m.y, m.z);
+      machineryDummy.rotation.set(0, m.rotationY + elapsed * spinSpeed, 0);
+      machineryDummy.scale.set(m.sx, m.sy, m.sz);
+      machineryDummy.updateMatrix();
+      machineryMeshRef.current.setMatrixAt(i, machineryDummy.matrix);
+    });
+    machineryMeshRef.current.instanceMatrix.needsUpdate = true;
+
+    antennaMaterial.opacity = 0.55 + 0.45 * Math.sin(elapsed * 2.3) * Math.sin(elapsed * 0.7 + 1.5);
+    signMaterial.opacity = 0.65 + 0.35 * Math.sin(elapsed * 3.1 + 2.0) * Math.sin(elapsed * 1.1);
   });
 
   return (

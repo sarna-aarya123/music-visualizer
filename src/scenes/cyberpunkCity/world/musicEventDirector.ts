@@ -37,8 +37,10 @@ export const majorEventState: MajorEventState = {
   originPosition: new THREE.Vector3(),
 };
 
-const PHASE_DURATIONS: Record<Exclude<MajorEventPhase, 'idle'>, number> = {
-  anticipation: 0.18,
+export const PHASE_DURATIONS: Record<Exclude<MajorEventPhase, 'idle'>, number> = {
+  // Long enough for a brief "breath before the hit" (a pre-flash dip in
+  // lighting) to actually read, not just a near-instant blip.
+  anticipation: 0.3,
   impact: 0.12,
   reaction: 0.75,
   recovery: 1.4,
