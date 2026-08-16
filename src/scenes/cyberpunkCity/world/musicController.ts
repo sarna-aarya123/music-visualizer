@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { AudioFeatureFrame } from '../../../audio/types';
 import { consumeBreakdown, consumeDrop, createBeatConsumerState, type BeatConsumerState } from '../../../audio/beatConsumer';
+import { majorEventState } from './musicEventDirector';
 
 /**
  * The speed model: "music controls the ride" — but deliberately NOT
@@ -100,7 +101,12 @@ export function stepSpeed(state: SpeedState, dt: number, frame: AudioFeatureFram
   }
   state.sectionMultiplier += (state.sectionMultiplierTarget - state.sectionMultiplier) * (1 - Math.exp(-MULTIPLIER_TRACK_RATE * dt));
 
-  const target = computeTargetSpeed(frame.energy) * state.sectionMultiplier;
+  // A brief "everyone holds their breath" dip right before a major event
+  // lands — the world (and the character riding it) slows slightly during
+  // the anticipation phase, so the drop itself reads as a release.
+  const anticipationDamp = majorEventState.phase === 'anticipation' ? 0.7 : 1;
+
+  const target = computeTargetSpeed(frame.energy) * state.sectionMultiplier * anticipationDamp;
   const rate = target > state.current ? SPEED_TRACK_RATE_UP : SPEED_TRACK_RATE_DOWN;
   state.current += (target - state.current) * (1 - Math.exp(-rate * dt));
   state.current = Math.max(state.current, 0);
