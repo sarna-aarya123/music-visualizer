@@ -58,8 +58,10 @@ const RADIUS_JITTER = 0.24;
 const ANGLE_JITTER = 0.09;
 // Route slope is capped so the tangent never approaches vertical — this is
 // what makes camera-orientation flips structurally impossible rather than
-// just unlikely (see CameraRig.tsx).
-const MAX_HEIGHT_DELTA_PER_ANCHOR = 9;
+// just unlikely (see CameraRig.tsx). Raised from 9 for more dramatic
+// rises/falls (ramp-like sections) — still comfortably short of vertical
+// given the anchor spacing.
+const MAX_HEIGHT_DELTA_PER_ANCHOR = 13;
 
 export interface Anchor {
   position: THREE.Vector3;

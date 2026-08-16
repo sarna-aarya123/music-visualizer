@@ -27,12 +27,19 @@ const BuildingMaterial = shaderMaterial(
     uColorBase: new THREE.Color('#0a0e24'),
     uColorWindow: new THREE.Color('#ffb35c'),
     uColorAccent: new THREE.Color('#7ef2ff'),
+    // District color families (see worldGenerator's DISTRICT_HUES): warm
+    // rust/orange for industrial areas, vivid magenta for canyon/plaza —
+    // a handful of recognizable moods rather than one palette everywhere.
+    uColorWarm: new THREE.Color('#ff8a3c'),
+    uColorVivid: new THREE.Color('#ff3fc8'),
   },
   // vertex
   /* glsl */ `
     attribute float aSeed;
+    attribute float aHue;
     varying vec2 vUv;
     varying float vSeed;
+    varying float vHue;
     varying vec3 vWorldPos;
     varying vec3 vNormalW;
     uniform float uBass;
@@ -40,6 +47,7 @@ const BuildingMaterial = shaderMaterial(
     void main() {
       vUv = uv;
       vSeed = aSeed;
+      vHue = aHue;
       vec3 pos = position;
       // Global "breathing" on bass — big enough to actually read as the
       // world pulsing with the music, not a barely-perceptible wobble.
@@ -63,8 +71,11 @@ const BuildingMaterial = shaderMaterial(
     uniform vec3 uColorBase;
     uniform vec3 uColorWindow;
     uniform vec3 uColorAccent;
+    uniform vec3 uColorWarm;
+    uniform vec3 uColorVivid;
     varying vec2 vUv;
     varying float vSeed;
+    varying float vHue;
     varying vec3 vWorldPos;
     varying vec3 vNormalW;
 
@@ -111,7 +122,9 @@ const BuildingMaterial = shaderMaterial(
       // accent instead, giving color separation rather than one uniform
       // "everything neon" wash. Strong bass shifts the whole facade
       // slightly warmer — buildings as instruments, not just scenery.
-      vec3 windowColor = mix(uColorWindow, uColorAccent, step(0.72, fract(vSeed * 5.2)));
+      vec3 districtWindow = mix(uColorWindow, uColorWarm, step(0.25, vHue) * step(vHue, 0.75));
+      districtWindow = mix(districtWindow, uColorVivid, step(0.75, vHue));
+      vec3 windowColor = mix(districtWindow, uColorAccent, step(0.72, fract(vSeed * 5.2)));
       windowColor = mix(windowColor, vec3(1.0, 0.85, 0.6), uPulse * 0.7);
       vec3 col = mix(shade, windowColor, clamp(glow, 0.0, 1.0) * (0.65 + 0.5 * uEnergy));
       col = mix(col, col * vec3(1.15, 1.0, 0.85), clamp(uBass * 1.3, 0.0, 0.5));
@@ -166,8 +179,13 @@ export function Buildings({ featureFrame, world }: SceneProps) {
   const geometry = useMemo(() => {
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const seeds = new Float32Array(world.segments.length);
-    world.segments.forEach((s, i) => (seeds[i] = s.seed));
+    const hues = new Float32Array(world.segments.length);
+    world.segments.forEach((s, i) => {
+      seeds[i] = s.seed;
+      hues[i] = s.hueShift ?? 0;
+    });
     geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
+    geo.setAttribute('aHue', new THREE.InstancedBufferAttribute(hues, 1));
     return geo;
   }, [world]);
 

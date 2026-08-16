@@ -2,13 +2,7 @@ import * as THREE from 'three';
 import { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import type { SceneProps } from '../types';
-import {
-  consumeBeat,
-  consumeDrop,
-  consumeEvent,
-  consumeSnareHit,
-  createBeatConsumerState,
-} from '../../audio/beatConsumer';
+import { consumeBeat, consumeDrop, consumeEvent, createBeatConsumerState } from '../../audio/beatConsumer';
 import {
   applyBeatBurst,
   applyMajorLaunch,
@@ -31,19 +25,23 @@ const STRONG_BEAT_BAR = 0.72;
 /**
  * The camera is a rider on the route, not a free body. Its only degrees of
  * freedom are: `t` (progress around the closed loop, driven entirely by
- * music-controlled speed) and a small, event-driven lateral snap clamped
- * well inside the route's guaranteed-clear corridor. Position and base
- * orientation come directly from RouteGenerator.getFrameAt(t) — this is
- * what makes flying through geometry and orientation flips structurally
- * impossible rather than just unlikely.
+ * music-controlled speed) and its base orientation from
+ * RouteGenerator.getFrameAt(t) — this is what makes flying through
+ * geometry and orientation flips structurally impossible rather than just
+ * unlikely.
  *
  * Every camera movement has to come from one of three sources — there is
  * deliberately no ambient/idle motion for its own sake:
  *   A. Route choreography — curvature-driven banking, always present,
  *      because the route actually turns.
- *   B. Music — tiered reactions to beat/808/snare/drop/major-event, each
- *      tier visibly bigger than the last, with Level 0/1 nearly silent so
- *      normal sections stay calm and comfortable to watch.
+ *   B. Music — but ONLY strong 808s, drops, and major events physically
+ *      move the camera. Hi-hats and snares/claps never do — see
+ *      world/musicEventDirector.ts for how the major-event trigger itself
+ *      is guarded against being set off by high-frequency content alone.
+ *      Regular beats get only a hint of FOV/banking. This hierarchy is a
+ *      deliberate, repeated product decision, not an oversight: the world
+ *      (buildings/ground/particles/atmosphere) is where hi-hat/snare
+ *      reactions live instead.
  *   C. Cinematic transitions — the altitude dive during a major event.
  */
 export function CameraRig({ featureFrame, route }: SceneProps) {
@@ -52,13 +50,11 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
   const t = useRef(Math.random());
   const speed = useRef(createSpeedState()).current;
   const beatState = useRef(createBeatConsumerState()).current;
-  const snareState = useRef(createBeatConsumerState()).current;
   const dropState = useRef(createBeatConsumerState()).current;
   const majorState = useRef(createBeatConsumerState()).current;
 
   const smoothedUp = useRef(new THREE.Vector3(0, 1, 0));
   const prevTangent = useRef<THREE.Vector3 | null>(null);
-  const snareSnap = useRef(0);
 
   const impactShake = useRef(0);
   const impactFov = useRef(0);
@@ -69,44 +65,42 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     const dt = Math.min(rawDelta, 0.05);
     const f = featureFrame;
 
-    // --- Level 0/1: a regular beat is almost silent — a hint of FOV and
+    // --- Level 1: a regular beat is almost silent — a hint of FOV and
     // banking, no shake, no speed change. Level 2: a strong beat (a real
-    // 808/kick) gets a short forward burst plus a real, brief punch.
+    // 808/kick) gets a short forward burst plus a controlled, still-modest
+    // punch — "potentially subtle FOV change", not a big hit.
     const beatHit = consumeBeat(f, beatState);
     if (beatHit > 0) {
       if (beatHit > STRONG_BEAT_BAR) {
         applyBeatBurst(speed, beatHit);
-        impactShake.current = Math.max(impactShake.current, 0.5 + (beatHit - STRONG_BEAT_BAR) * 1.6);
-        impactFov.current = Math.max(impactFov.current, 6 + beatHit * 10);
-        beatBank.current += (Math.random() < 0.5 ? -1 : 1) * (0.12 + beatHit * 0.18);
+        impactShake.current = Math.max(impactShake.current, 0.35 + (beatHit - STRONG_BEAT_BAR) * 1.1);
+        impactFov.current = Math.max(impactFov.current, 4 + beatHit * 6);
+        beatBank.current += (Math.random() < 0.5 ? -1 : 1) * (0.08 + beatHit * 0.12);
       } else {
-        impactFov.current = Math.max(impactFov.current, beatHit * 2.5);
-        beatBank.current += (Math.random() < 0.5 ? -1 : 1) * beatHit * 0.045;
+        impactFov.current = Math.max(impactFov.current, beatHit * 1.5);
+        beatBank.current += (Math.random() < 0.5 ? -1 : 1) * beatHit * 0.025;
       }
     }
 
-    // --- Snare/clap: a sharp, directional lateral snap — a visibly
-    // different kind of reaction from the bass punch, and no speed change
-    // at all (this is a maneuver, not a boost).
-    const snareHit = consumeSnareHit(f, snareState);
-    if (snareHit > 0) {
-      snareSnap.current += (Math.random() < 0.5 ? -1 : 1) * snareHit * 1.7;
-      impactFov.current = Math.max(impactFov.current, snareHit * 5);
-    }
+    // Hi-hats and snares/claps are deliberately NOT consumed here at all —
+    // they drive world reactions (Buildings/Particles/Ground/CityAtmosphere)
+    // but must never touch camera position, rotation, banking, FOV, or
+    // shake. See the file-level comment above.
 
-    // --- Level 3: a drop gets its own explicit camera punch on top of the
-    // speed surge musicController already applies — aggressive but still
-    // a single controlled event, not sustained shaking.
+    // --- Drop: its own explicit camera punch on top of the speed surge
+    // musicController already applies — noticeably more than a strong
+    // beat, but still one controlled event, not sustained shaking.
     const dropHit = consumeDrop(f, dropState);
     if (dropHit > 0) {
-      impactShake.current = Math.max(impactShake.current, 0.9);
-      impactFov.current = Math.max(impactFov.current, 22);
-      beatBank.current += (Math.random() < 0.5 ? -1 : 1) * 0.3;
+      impactShake.current = Math.max(impactShake.current, 0.75);
+      impactFov.current = Math.max(impactFov.current, 18);
+      beatBank.current += (Math.random() < 0.5 ? -1 : 1) * 0.24;
     }
 
-    // --- Level 4: a full major event — the one place a truly large launch
-    // happens, plus a deliberate cinematic dive (a chosen transition, not
-    // random altitude wander).
+    // --- Major event: the one place a truly large launch happens, plus a
+    // deliberate cinematic dive (a chosen transition, not random altitude
+    // wander). Gated in musicEventDirector.ts to require real bass/energy
+    // involvement, not just a burst of high-frequency content.
     const majorHit = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorState);
     if (majorHit > 0) {
       applyMajorLaunch(speed, majorHit);
@@ -126,9 +120,6 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     t.current = ((t.current + (speed.current * dt) / route.length) % 1 + 1) % 1;
 
     const frame = route.getFrameAt(t.current);
-    const { corridorRadius } = route.getDistrictInfoAt(t.current);
-
-    snareSnap.current *= Math.exp(-dt * 7);
 
     const decay = Math.exp(-dt * 8);
     impactShake.current *= decay;
@@ -136,12 +127,9 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     beatBank.current *= Math.exp(-dt * 3.5);
     const shakeMag = impactShake.current * 0.3;
 
-    const maxLateral = corridorRadius - 1.5;
-    const totalLateral = THREE.MathUtils.clamp(snareSnap.current, -maxLateral, maxLateral);
-
     const position = frame.position
       .clone()
-      .addScaledVector(frame.right, totalLateral + (Math.random() - 0.5) * shakeMag)
+      .addScaledVector(frame.right, (Math.random() - 0.5) * shakeMag)
       .addScaledVector(frame.up, EYE_HEIGHT + altitudeDive + (Math.random() - 0.5) * shakeMag * 0.5);
     camera.position.copy(position);
 
@@ -163,7 +151,7 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     }
     prevTangent.current = frame.tangent.clone();
 
-    const bank = THREE.MathUtils.clamp(curvatureBank + beatBank.current - snareSnap.current * 0.05, -0.55, 0.55);
+    const bank = THREE.MathUtils.clamp(curvatureBank + beatBank.current, -0.55, 0.55);
     const bankedUp = smoothedUp.current.clone().applyAxisAngle(frame.tangent, bank);
     camera.up.copy(bankedUp);
     camera.lookAt(position.clone().addScaledVector(frame.tangent, LOOK_AHEAD));

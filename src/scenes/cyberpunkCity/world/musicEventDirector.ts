@@ -53,6 +53,14 @@ const PHASE_ORDER: MajorEventPhase[] = ['anticipation', 'impact', 'reaction', 'r
 const MIN_EVENT_GAP = 7;
 const IMPACT_SCORE_BAR = 0.86;
 const SPECTRAL_SHIFT_BAR = 0.55;
+/** impactScore weights bass/mid/high flux together, so a burst of pure
+ *  hi-hats or snares alone can spike it — but a major event physically
+ *  moves the camera (see CameraRig), and hi-hats/snares must never do
+ *  that. Requiring real overall loudness alongside the impact spike is a
+ *  cheap, effective guard against that indirect path: a hi-hat flurry
+ *  with everything else quiet won't have high `energy`, but a genuine
+ *  drop or 808-heavy passage will. */
+const IMPACT_SPIKE_MIN_ENERGY = 0.4;
 
 let impactCounter = 0;
 let lastMajorEventTime = -999;
@@ -83,7 +91,7 @@ export function stepMusicEventDirector(
   if (majorEventState.phase === 'idle') {
     const dropHit = consumeDrop(frame, dropConsumer);
     const shiftHit = consumeSpectralShift(frame, shiftConsumer);
-    const impactSpike = frame.impactScore > IMPACT_SCORE_BAR;
+    const impactSpike = frame.impactScore > IMPACT_SCORE_BAR && frame.energy > IMPACT_SPIKE_MIN_ENERGY;
     const cooldownOk = elapsed - lastMajorEventTime > MIN_EVENT_GAP;
 
     if (cooldownOk && (dropHit > 0 || shiftHit > SPECTRAL_SHIFT_BAR || impactSpike)) {
