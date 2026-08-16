@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import type { SceneProps } from '../types';
-import { consumeBeat, consumeSnareHit, createBeatConsumerState } from '../../audio/beatConsumer';
+import { consumeBeat, consumeSnareHit, consumeSpectralShift, createBeatConsumerState } from '../../audio/beatConsumer';
 import { getMajorEventEnvelope } from './world/musicEventDirector';
 
 // ---------------------------------------------------------------------------
@@ -113,9 +113,14 @@ const BuildingMaterial = shaderMaterial(
       // posterization for a genuine light/dark PLANE per face, not per
       // pixel.
       float ndotl = dot(normalize(vNormalW), normalize(uLightDir));
-      float toonBand = ndotl > 0.4 ? 1.0 : (ndotl > -0.05 ? 0.6 : 0.32);
+      float toonBand = ndotl > 0.4 ? 1.0 : (ndotl > -0.05 ? 0.5 : 0.16);
       float heightBand = floor(vUv.y * 4.0) / 4.0;
       vec3 shade = uColorBase * (0.32 + 0.5 * heightBand) * toonBand;
+
+      // A slow, always-on light band scanning up every facade — the world
+      // stays visibly alive even with the camera calm and the music quiet.
+      float scan = smoothstep(0.94, 1.0, sin(vUv.y * 2.4 - uTime * 0.35 + vSeed * 6.0));
+      shade += uColorAccent * scan * 0.12;
 
       // Cool-dominant, warm-accent composition: most windows are the warm
       // amber accent color; a minority of buildings use the cool cyan
@@ -164,17 +169,51 @@ const signMaterial = new THREE.MeshBasicMaterial({
 const roofCapGeometry = new THREE.ConeGeometry(1, 1, 6);
 const roofCapMaterial = new THREE.MeshStandardMaterial({ color: '#141230', roughness: 0.75 });
 
+// Toon outline via the classic "inverted hull" technique: a second copy of
+// every segment, pushed outward along its own normal by a roughly constant
+// WORLD-space thickness (compensating for each instance's own non-uniform
+// scale), rendered back-face-only so just the silhouette rim shows through
+// — this is what makes the skyline read as illustrated rather than
+// smooth-shaded 3D. Reuses the segment mesh's own instance matrices
+// (copied, not recomputed) and geometry, so it costs one extra draw call
+// rather than a second full generation pass.
+const OutlineMaterial = shaderMaterial(
+  { uOutlineWidth: 0.055, uColor: new THREE.Color('#020103') },
+  /* glsl */ `
+    uniform float uOutlineWidth;
+    void main() {
+      vec3 instScale = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+      vec3 push = normal * (uOutlineWidth / max(instScale, vec3(0.001)));
+      vec4 worldPos = modelMatrix * instanceMatrix * vec4(position + push, 1.0);
+      gl_Position = projectionMatrix * viewMatrix * worldPos;
+    }
+  `,
+  /* glsl */ `
+    uniform vec3 uColor;
+    void main() {
+      gl_FragColor = vec4(uColor, 1.0);
+    }
+  `
+);
+
 export function Buildings({ featureFrame, world }: SceneProps) {
   const segmentsMeshRef = useRef<THREE.InstancedMesh>(null!);
+  const outlineMeshRef = useRef<THREE.InstancedMesh>(null!);
   const antennaMeshRef = useRef<THREE.InstancedMesh>(null!);
   const machineryMeshRef = useRef<THREE.InstancedMesh>(null!);
   const signMeshRef = useRef<THREE.InstancedMesh>(null!);
   const roofCapMeshRef = useRef<THREE.InstancedMesh>(null!);
 
   const material = useMemo(() => new BuildingMaterial(), []);
+  const outlineMaterial = useMemo(() => {
+    const m = new OutlineMaterial();
+    m.side = THREE.BackSide;
+    return m;
+  }, []);
   const pulse = useRef(0);
   const beatState = useRef(createBeatConsumerState()).current;
   const snareState = useRef(createBeatConsumerState()).current;
+  const shiftState = useRef(createBeatConsumerState()).current;
 
   const geometry = useMemo(() => {
     const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -200,6 +239,11 @@ export function Buildings({ featureFrame, world }: SceneProps) {
       segmentsMeshRef.current.setMatrixAt(i, dummy.matrix);
     });
     segmentsMeshRef.current.instanceMatrix.needsUpdate = true;
+
+    // The outline shell reuses the exact same instance transforms — copy
+    // rather than recompute.
+    outlineMeshRef.current.instanceMatrix.copyArray(segmentsMeshRef.current.instanceMatrix.array);
+    outlineMeshRef.current.instanceMatrix.needsUpdate = true;
 
     world.antennas.forEach((a, i) => {
       dummy.position.set(a.x, a.y + a.height / 2, a.z);
@@ -256,6 +300,10 @@ export function Buildings({ featureFrame, world }: SceneProps) {
     if (beatHit > 0) pulse.current = Math.max(pulse.current, beatHit);
     const snareHit = consumeSnareHit(featureFrame, snareState);
     if (snareHit > 0) pulse.current = Math.max(pulse.current, snareHit * 0.8);
+    // A beat switch changes the world's identity, not just its brightness
+    // — the skyline flashes as one visible "something changed" moment.
+    const shiftHit = consumeSpectralShift(featureFrame, shiftState);
+    if (shiftHit > 0) pulse.current = Math.max(pulse.current, shiftHit);
     pulse.current *= Math.exp(-dt * 6);
 
     const u = material.uniforms;
@@ -291,6 +339,7 @@ export function Buildings({ featureFrame, world }: SceneProps) {
         args={[geometry, material, world.segments.length]}
         frustumCulled={false}
       />
+      <instancedMesh ref={outlineMeshRef} args={[geometry, outlineMaterial, world.segments.length]} frustumCulled={false} />
       <instancedMesh
         ref={antennaMeshRef}
         args={[antennaGeometry, antennaMaterial, world.antennas.length]}
