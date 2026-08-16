@@ -11,11 +11,16 @@ import {
   stepSpeed,
 } from './world/musicController';
 import { cameraMotionState } from './world/cameraMotionState';
+import { characterMotionState } from './world/characterMotionState';
 import { getMajorEventEnvelope, majorEventState } from './world/musicEventDirector';
+import { useViewModeStore } from '../../state/viewModeStore';
 
-const EYE_HEIGHT = 3.2;
+const HEAD_HEIGHT = 1.75; // first-person: the character's own eye height
+const FOLLOW_DIST = 5.5; // third-person: how far behind the character
+const FOLLOW_HEIGHT = 2.4; // third-person: how far above the character
 const BASE_FOV = 52;
 const LOOK_AHEAD = 16;
+const MODE_BLEND_RATE = 1.6; // per second — the third/first-person transition
 
 /** Below this, a beat produces no camera reaction at all — "almost no
  *  camera movement" for normal bass. Above it, a beat qualifies as a real
@@ -40,34 +45,27 @@ function pickImpulseKind(): ImpulseKind {
 }
 
 /**
- * The camera is a rider on the route, not a free body. Its only degrees of
- * freedom are: `t` (progress along the closed loop) and a handful of
- * small, decaying impulses. Position and base orientation come directly
- * from RouteGenerator.getFrameAt(t) — this is what makes flying through
- * geometry and orientation flips structurally impossible rather than just
- * unlikely.
+ * Owns the character's progress along the route (`t`) and the
+ * music-driven speed model, publishes the resulting ground frame to
+ * characterMotionState (read by Character.tsx), and frames the camera
+ * either as a third-person chase shot or a first-person head position —
+ * blended smoothly on toggle, never snapping.
  *
- * STRICT RULE: only the bass/808 detector (`beatId`/`beatIntensity`) and
- * the events built on top of it (`dropId`, a major event) may physically
+ * STRICT RULE unchanged from prior iterations: only the bass/808 detector
+ * and the events built on it (`dropId`, a major event) may physically
  * move the camera. Hi-hats, snares, mid-frequency content, and spectral
- * changes are never consumed here at all — they drive world reactions
- * instead (Buildings/Particles/Ground/CityAtmosphere). The major-event
- * trigger itself is separately guarded in musicEventDirector.ts against
- * being set off by high-frequency content alone.
+ * changes are never consumed here — they drive world reactions instead.
  *
- * Every camera movement has to come from one of three sources — there is
- * deliberately no ambient/idle motion for its own sake:
+ * Every camera movement still has to come from one of three sources:
  *   A. Route choreography — curvature-driven banking, always present but
- *      kept subtle, because the route actually turns.
- *   B. Music — but ONLY low-frequency events, and even then most beats
- *      (below REACT_BAR) produce nothing. When a beat does react, it picks
- *      ONE of several distinct movement types (forward/vertical/
- *      rotational/FOV, rarely lateral) rather than always banking
- *      sideways — see pickImpulseKind.
- *   C. Cinematic transitions — the altitude dive during a major event.
+ *      kept subtle.
+ *   B. Music — low-frequency events only, tiered, varied in kind.
+ *   C. Cinematic transitions — the altitude dive during a major event, and
+ *      the third/first-person blend itself.
  */
 export function CameraRig({ featureFrame, route }: SceneProps) {
   const { camera } = useThree();
+  const mode = useViewModeStore((s) => s.mode);
 
   const t = useRef(Math.random());
   const speed = useRef(createSpeedState()).current;
@@ -77,6 +75,8 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
 
   const smoothedUp = useRef(new THREE.Vector3(0, 1, 0));
   const prevTangent = useRef<THREE.Vector3 | null>(null);
+  const modeBlend = useRef(mode === 'first' ? 1 : 0);
+  const chaseLag = useRef<THREE.Vector3 | null>(null);
 
   // Decaying impulses — each a distinct kind of movement, so a reaction
   // doesn't always look like "tilt sideways".
@@ -122,8 +122,6 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
       if (beatHit > STRONG_BEAT_BAR) applyBeatBurst(speed, beatHit);
 
       if (beatHit > VERY_STRONG_BAR) {
-        // A very strong hit combines two distinct movement types rather
-        // than just scaling one up.
         const kindA = pickImpulseKind();
         let kindB = pickImpulseKind();
         if (kindB === kindA) kindB = pickImpulseKind();
@@ -132,7 +130,6 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
       } else if (beatHit > STRONG_BEAT_BAR) {
         applyImpulse(pickImpulseKind(), 0.85);
       } else {
-        // Between REACT_BAR and STRONG_BEAT_BAR: "almost nothing obvious".
         applyImpulse(pickImpulseKind(), 0.22);
       }
     }
@@ -140,8 +137,6 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     // Hi-hats, snares/claps, mid content, and spectral changes are
     // deliberately NOT consumed here at all — see the file-level comment.
 
-    // --- Drop: a bigger, combined reaction — still controlled, not
-    // sustained shaking.
     const dropHit = consumeDrop(f, dropState);
     if (dropHit > 0) {
       impulseForward.current = Math.max(impulseForward.current, 1.4);
@@ -149,9 +144,6 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
       impactFov.current = Math.max(impactFov.current, 15);
     }
 
-    // --- Major event: the one place a truly large, multi-part launch
-    // happens, plus a deliberate cinematic dive (a chosen transition, not
-    // random altitude wander).
     const majorHit = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorState);
     if (majorHit > 0) {
       applyMajorLaunch(speed, majorHit);
@@ -162,16 +154,19 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     const majorEnvelope = getMajorEventEnvelope();
     const altitudeDive = -majorEnvelope * 2.4;
 
-    // Structural drop/breakdown events (consumed inside stepSpeed) are
-    // what actually drive the big cruise -> fast-section -> settle curve.
     stepSpeed(speed, dt, f);
     cameraMotionState.speed = speed.current;
 
-    // --- Advance along the route (arc-length based: speed is in real
-    // world units/sec regardless of route length or curvature). ----------
     t.current = ((t.current + (speed.current * dt) / route.length) % 1 + 1) % 1;
-
     const frame = route.getFrameAt(t.current);
+
+    // Publish the character's ground frame for Character.tsx to read.
+    characterMotionState.t = t.current;
+    characterMotionState.position.copy(frame.position);
+    characterMotionState.tangent.copy(frame.tangent);
+    characterMotionState.right.copy(frame.right);
+    characterMotionState.up.copy(frame.up);
+    characterMotionState.speed = speed.current;
 
     const decay = Math.exp(-dt * 7);
     impulseForward.current *= decay;
@@ -182,20 +177,36 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     impactFov.current *= Math.exp(-dt * 8);
     beatBank.current *= Math.exp(-dt * 3.5);
 
-    const position = frame.position
+    // --- Third-person chase position: behind and above the character,
+    // smoothed so it lags slightly rather than rigidly tracking — a chase
+    // camera, not a rigidly-attached one.
+    const thirdPersonTarget = frame.position
+      .clone()
+      .addScaledVector(frame.tangent, -FOLLOW_DIST)
+      .addScaledVector(frame.right, impulseLateral.current * 0.5)
+      .addScaledVector(frame.up, FOLLOW_HEIGHT + altitudeDive * 0.5 + impulseVertical.current * 0.5);
+    if (!chaseLag.current) chaseLag.current = thirdPersonTarget.clone();
+    chaseLag.current.lerp(thirdPersonTarget, 1 - Math.exp(-dt * 5));
+    const thirdPersonPos = chaseLag.current
+      .clone()
+      .addScaledVector(frame.tangent, impulseForward.current * 0.6);
+
+    // --- First-person head position: exactly at the character's eyes.
+    const firstPersonPos = frame.position
       .clone()
       .addScaledVector(frame.tangent, impulseForward.current)
       .addScaledVector(frame.right, impulseLateral.current)
-      .addScaledVector(frame.up, EYE_HEIGHT + altitudeDive + impulseVertical.current);
+      .addScaledVector(frame.up, HEAD_HEIGHT + altitudeDive + impulseVertical.current);
+
+    const modeTarget = mode === 'first' ? 1 : 0;
+    modeBlend.current += (modeTarget - modeBlend.current) * (1 - Math.exp(-MODE_BLEND_RATE * dt));
+
+    const position = thirdPersonPos.clone().lerp(firstPersonPos, modeBlend.current);
     camera.position.copy(position);
 
     // --- Orientation: stable, world-up-referenced, never a Frenet frame.
     smoothedUp.current.lerp(frame.up, 1 - Math.exp(-dt * 3)).normalize();
 
-    // Bank into actual measured curvature (real turns) — always present
-    // because the route genuinely turns, but kept subtle at baseline so it
-    // never reads as "constant side-to-side" — plus the rare beat-driven
-    // lateral component above, and a stronger scale during a major event.
     let curvatureBank = 0;
     if (prevTangent.current) {
       const cross = new THREE.Vector3().crossVectors(prevTangent.current, frame.tangent);
@@ -207,19 +218,28 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     }
     prevTangent.current = frame.tangent.clone();
 
-    const bank = THREE.MathUtils.clamp(curvatureBank + beatBank.current, -0.5, 0.5);
+    // Third-person stays level (a chase cam banking with the road reads as
+    // nauseating); only first-person inherits the route's bank.
+    const bank = THREE.MathUtils.clamp((curvatureBank + beatBank.current) * modeBlend.current, -0.5, 0.5);
     const bankedUp = smoothedUp.current.clone().applyAxisAngle(frame.tangent, bank);
     camera.up.copy(bankedUp);
 
-    // A tiny "glance" — the rotational impulse nudges where we look, not
-    // the camera's up vector, so it can never contribute to a flip.
     const lookXClamped = THREE.MathUtils.clamp(impulseLookX.current, -6, 6);
     const lookYClamped = THREE.MathUtils.clamp(impulseLookY.current, -4, 4);
-    const lookTarget = position
+
+    // Third-person looks toward the character (slightly ahead, roughly
+    // torso height) so they stay framed; first-person looks straight
+    // ahead down the route, nudged by the rotational "glance" impulse.
+    const thirdPersonLook = frame.position
+      .clone()
+      .addScaledVector(frame.tangent, 5)
+      .addScaledVector(frame.up, 1.5);
+    const firstPersonLook = position
       .clone()
       .addScaledVector(frame.tangent, LOOK_AHEAD)
       .addScaledVector(frame.right, lookXClamped)
       .addScaledVector(frame.up, lookYClamped);
+    const lookTarget = thirdPersonLook.clone().lerp(firstPersonLook, modeBlend.current);
     camera.lookAt(lookTarget);
 
     // --- FOV: base + speed-driven widening (a classic speed cue, tied to
