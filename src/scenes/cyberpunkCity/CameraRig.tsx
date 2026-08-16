@@ -13,6 +13,7 @@ import {
 import { cameraMotionState } from './world/cameraMotionState';
 import { characterMotionState } from './world/characterMotionState';
 import { getMajorEventEnvelope, majorEventState } from './world/musicEventDirector';
+import { cinematicState, computeShotTransform, getCinematicBlend, stepCinematicDirector } from './world/cinematicDirector';
 import { useViewModeStore } from '../../state/viewModeStore';
 
 const HEAD_HEIGHT = 1.75; // first-person: the character's own eye height
@@ -63,7 +64,7 @@ function pickImpulseKind(): ImpulseKind {
  *   C. Cinematic transitions — the altitude dive during a major event, and
  *      the third/first-person blend itself.
  */
-export function CameraRig({ featureFrame, route }: SceneProps) {
+export function CameraRig({ featureFrame, route, world }: SceneProps) {
   const { camera } = useThree();
   const mode = useViewModeStore((s) => s.mode);
 
@@ -168,6 +169,13 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     characterMotionState.up.copy(frame.up);
     characterMotionState.speed = speed.current;
 
+    // The cinematic director decides WHEN a shot change is warranted
+    // (drop / major event / landmark proximity / district transition,
+    // never a timer) — the gameplay chase camera below stays the default
+    // and this only ever blends briefly toward an alternate framing.
+    const district = route.getDistrictInfoAt(t.current).district;
+    stepCinematicDirector(dt, f, state.clock.elapsedTime, frame.position, district, world);
+
     const decay = Math.exp(-dt * 7);
     impulseForward.current *= decay;
     impulseVertical.current *= decay;
@@ -201,7 +209,25 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
     const modeTarget = mode === 'first' ? 1 : 0;
     modeBlend.current += (modeTarget - modeBlend.current) * (1 - Math.exp(-MODE_BLEND_RATE * dt));
 
-    const position = thirdPersonPos.clone().lerp(firstPersonPos, modeBlend.current);
+    let position = thirdPersonPos.clone().lerp(firstPersonPos, modeBlend.current);
+
+    // Cinematic shots only ever apply on top of third-person — first-person
+    // stays exactly as stable as before (this iteration deliberately
+    // doesn't touch it).
+    const cineBlend = getCinematicBlend() * (1 - modeBlend.current);
+    let cinematicLook: THREE.Vector3 | null = null;
+    if (cineBlend > 0) {
+      const shot = computeShotTransform(
+        cinematicState.shot,
+        frame.position,
+        frame.tangent,
+        frame.right,
+        frame.up,
+        cinematicState.targetPosition
+      );
+      position = position.clone().lerp(shot.position, cineBlend);
+      cinematicLook = shot.look;
+    }
     camera.position.copy(position);
 
     // --- Orientation: stable, world-up-referenced, never a Frenet frame.
@@ -239,7 +265,8 @@ export function CameraRig({ featureFrame, route }: SceneProps) {
       .addScaledVector(frame.tangent, LOOK_AHEAD)
       .addScaledVector(frame.right, lookXClamped)
       .addScaledVector(frame.up, lookYClamped);
-    const lookTarget = thirdPersonLook.clone().lerp(firstPersonLook, modeBlend.current);
+    let lookTarget = thirdPersonLook.clone().lerp(firstPersonLook, modeBlend.current);
+    if (cinematicLook) lookTarget = lookTarget.clone().lerp(cinematicLook, cineBlend);
     camera.lookAt(lookTarget);
 
     // --- FOV: base + speed-driven widening (a classic speed cue, tied to
