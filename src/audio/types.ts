@@ -77,6 +77,16 @@ export interface AudioFeatureFrame {
 
   /** Current playback time in seconds, mirrored here for convenience. */
   time: number;
+
+  /** A slow, heavily-smoothed (multi-second time constant) trailing
+   *  average of `energy` — the song SECTION's mood (calm/building/peak),
+   *  not its instantaneous loudness. Deliberately a completely separate
+   *  smoothing pass from anything onset/drop/breakdown detection uses, so
+   *  visual "world mood" consumers can read it without ever influencing —
+   *  or being tied to — the tuned detector state. Meant to set a slow
+   *  baseline that fast beat/energy reactions layer on top of, not to be
+   *  used for anything that should react quickly. */
+  sectionMood: number;
 }
 
 export function createEmptyFeatureFrame(): AudioFeatureFrame {
@@ -105,5 +115,6 @@ export function createEmptyFeatureFrame(): AudioFeatureFrame {
     breakdownId: 0,
     impactScore: 0,
     time: 0,
+    sectionMood: 0,
   };
 }

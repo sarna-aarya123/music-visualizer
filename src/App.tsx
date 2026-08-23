@@ -3,12 +3,24 @@ import { VisualizerCanvas } from './core/VisualizerCanvas';
 import { UploadPanel } from './ui/UploadPanel';
 import { TransportControls } from './ui/TransportControls';
 import { useViewModeStore } from './state/viewModeStore';
+import { useEnvironmentStore } from './state/environmentStore';
+import { ENVIRONMENTS } from './scenes/registry';
 import './App.css';
+
+const ENVIRONMENT_IDS = Object.keys(ENVIRONMENTS);
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mode = useViewModeStore((s) => s.mode);
   const toggleViewMode = useViewModeStore((s) => s.toggle);
+  const activeEnvironmentId = useEnvironmentStore((s) => s.activeId);
+  const setActiveEnvironment = useEnvironmentStore((s) => s.setActive);
+
+  const cycleEnvironment = useCallback(() => {
+    const idx = ENVIRONMENT_IDS.indexOf(activeEnvironmentId);
+    const next = ENVIRONMENT_IDS[(idx + 1) % ENVIRONMENT_IDS.length];
+    setActiveEnvironment(next);
+  }, [activeEnvironmentId, setActiveEnvironment]);
 
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
@@ -39,6 +51,9 @@ export default function App() {
         </button>
         <button className="fullscreen-btn" onClick={toggleViewMode} title="Press V to toggle">
           {mode === 'third' ? '🚶 Third Person' : '👁 First Person'} (V)
+        </button>
+        <button className="fullscreen-btn" onClick={cycleEnvironment} title="Switch environment">
+          🌍 {ENVIRONMENTS[activeEnvironmentId]?.name ?? activeEnvironmentId}
         </button>
       </div>
     </div>

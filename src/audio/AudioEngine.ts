@@ -76,23 +76,7 @@ export class AudioEngine {
   play(): void {
     if (!this.ctx || !this.gainNode || !this.buffer || this.playing) return;
     if (this.ctx.state === 'suspended') this.ctx.resume();
-
-    const source = this.ctx.createBufferSource();
-    source.buffer = this.buffer;
-    source.connect(this.gainNode);
-    source.onended = () => {
-      // Only fires for natural end-of-track — pause()/loadFile() detach
-      // this handler before manually stopping a source.
-      this.playing = false;
-      this.startOffset = 0;
-      this.sourceNode = null;
-      this.onEndedCallback?.();
-    };
-
-    source.start(0, this.startOffset % this.buffer.duration);
-    this.sourceNode = source;
-    this.startedAtCtxTime = this.ctx.currentTime;
-    this.playing = true;
+    this.startSourceAt(this.startOffset % this.buffer.duration);
   }
 
   pause(): void {
@@ -100,6 +84,31 @@ export class AudioEngine {
     this.startOffset += this.ctx.currentTime - this.startedAtCtxTime;
     this.stopInternal();
     this.playing = false;
+  }
+
+  /** Jumps playback to an arbitrary offset. A source node is one-shot (see
+   *  the file-level doc comment), so seeking while playing means stopping
+   *  the current source and starting a fresh one at the new offset — the
+   *  same pattern `play()` uses, just at an explicit offset instead of the
+   *  resume offset. While paused, this only updates `startOffset`; the
+   *  next `play()` naturally resumes from the new position. */
+  seek(time: number): void {
+    if (!this.buffer) return;
+    const clamped = Math.min(Math.max(time, 0), this.buffer.duration);
+    if (this.playing) {
+      this.stopInternal();
+      this.startSourceAt(clamped);
+    } else {
+      this.startOffset = clamped;
+    }
+  }
+
+  setVolume(v: number): void {
+    if (this.gainNode) this.gainNode.gain.value = Math.min(1, Math.max(0, v));
+  }
+
+  getVolume(): number {
+    return this.gainNode?.gain.value ?? 1;
   }
 
   getCurrentTime(): number {
@@ -110,6 +119,31 @@ export class AudioEngine {
 
   isPlaying(): boolean {
     return this.playing;
+  }
+
+  /** Shared by `play()` and `seek()` — creates and starts a fresh
+   *  one-shot source node at `offset`, wiring the same natural-end
+   *  handler both call sites need. */
+  private startSourceAt(offset: number): void {
+    if (!this.ctx || !this.gainNode || !this.buffer) return;
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.buffer;
+    source.connect(this.gainNode);
+    source.onended = () => {
+      // Only fires for natural end-of-track — pause()/loadFile()/seek()
+      // detach this handler before manually stopping a source.
+      this.playing = false;
+      this.startOffset = 0;
+      this.sourceNode = null;
+      this.onEndedCallback?.();
+    };
+
+    source.start(0, offset);
+    this.sourceNode = source;
+    this.startOffset = offset;
+    this.startedAtCtxTime = this.ctx.currentTime;
+    this.playing = true;
   }
 
   private stopInternal(): void {

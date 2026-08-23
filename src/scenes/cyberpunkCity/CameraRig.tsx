@@ -1,26 +1,50 @@
 import * as THREE from 'three';
 import { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import type { SceneProps } from '../types';
+import type { AudioFeatureFrame } from '../../audio/types';
+import type { RouteData } from './world/routeGenerator';
+import type { WorldBase } from '../shared/environment';
 import { consumeBeat, consumeDrop, consumeEvent, createBeatConsumerState } from '../../audio/beatConsumer';
 import {
   applyBeatBurst,
   applyMajorLaunch,
   createSpeedState,
-  MAX_SPEED_CAP,
+  speedPerceptionFrac,
   stepSpeed,
 } from './world/musicController';
 import { cameraMotionState } from './world/cameraMotionState';
 import { characterMotionState } from './world/characterMotionState';
-import { getMajorEventEnvelope, majorEventState } from './world/musicEventDirector';
+import { getMajorEventEnvelope, majorEventState, PHASE_DURATIONS } from './world/musicEventDirector';
 import { cinematicState, computeShotTransform, getCinematicBlend, stepCinematicDirector } from './world/cinematicDirector';
 import { useViewModeStore } from '../../state/viewModeStore';
+import { useAudioStore } from '../../state/audioStore';
+
+/**
+ * Multi-environment architecture: CameraRig is genuinely environment-
+ * agnostic (see the file-level comment below), so its props are its own
+ * minimal shape rather than cyberpunk's `SceneProps` — `route` only needs
+ * the generic `RouteData<string>` (any environment's district/region names
+ * work), and `world` only needs to satisfy `WorldBase` (just
+ * `landmarkPositions`, forwarded to the equally-generic cinematicDirector).
+ * Cyberpunk's actual `route`/`world` objects are structurally compatible
+ * with these, so CyberpunkCityScene.tsx's call site needs no changes.
+ */
+interface CameraRigProps {
+  featureFrame: AudioFeatureFrame;
+  route: RouteData<string>;
+  world: WorldBase;
+}
 
 const HEAD_HEIGHT = 1.75; // first-person: the character's own eye height
 const FOLLOW_DIST = 5.5; // third-person: how far behind the character
-const FOLLOW_HEIGHT = 2.4; // third-person: how far above the character
+// Raised, and the look target pulled in closer/lower (see thirdPersonLook
+// below) — the default chase view now looks DOWN onto the character from
+// slightly above, rather than sitting level and staring far down the road.
+const FOLLOW_HEIGHT = 3.3; // third-person: how far above the character
 const BASE_FOV = 52;
 const LOOK_AHEAD = 16;
+const CHASE_LOOK_AHEAD = 3.2; // third-person look target: how far ahead of the character
+const CHASE_LOOK_HEIGHT = 0.9; // third-person look target: how far above the character
 const MODE_BLEND_RATE = 1.6; // per second — the third/first-person transition
 
 /** Below this, a beat produces no camera reaction at all — "almost no
@@ -64,7 +88,7 @@ function pickImpulseKind(): ImpulseKind {
  *   C. Cinematic transitions — the altitude dive during a major event, and
  *      the third/first-person blend itself.
  */
-export function CameraRig({ featureFrame, route, world }: SceneProps) {
+export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
   const { camera } = useThree();
   const mode = useViewModeStore((s) => s.mode);
 
@@ -76,6 +100,12 @@ export function CameraRig({ featureFrame, route, world }: SceneProps) {
 
   const smoothedUp = useRef(new THREE.Vector3(0, 1, 0));
   const prevTangent = useRef<THREE.Vector3 | null>(null);
+  // Route-curvature banking is recomputed instantaneously each frame from
+  // the raw frame-to-frame tangent delta, which can carry small numerical
+  // noise (spline curvature variation, dt jitter) straight into visible
+  // camera roll. Easing it removes that micro-jitter without dulling the
+  // beat-driven punch (which stays a separate, unsmoothed impulse below).
+  const smoothedCurvatureBank = useRef(0);
   const modeBlend = useRef(mode === 'first' ? 1 : 0);
   const chaseLag = useRef<THREE.Vector3 | null>(null);
 
@@ -89,6 +119,13 @@ export function CameraRig({ featureFrame, route, world }: SceneProps) {
   const impactFov = useRef(0);
   const beatBank = useRef(0);
   const currentFov = useRef(BASE_FOV);
+  // Phase 5 step 5: anticipationBuild itself (see below) steps from its
+  // peak straight to 0 the instant majorEventState.phase leaves
+  // 'anticipation' — the FOV use of it is already smoothed through
+  // currentFov's own ease, but the third-person position pull-back uses it
+  // directly, with no ease of its own in between. One small ease ref
+  // closes that gap without touching the impulse/threshold system itself.
+  const anticipationPullback = useRef(0);
 
   useFrame((state, rawDelta) => {
     const dt = Math.min(rawDelta, 0.05);
@@ -155,10 +192,49 @@ export function CameraRig({ featureFrame, route, world }: SceneProps) {
     const majorEnvelope = getMajorEventEnvelope();
     const altitudeDive = -majorEnvelope * 2.4;
 
-    stepSpeed(speed, dt, f);
-    cameraMotionState.speed = speed.current;
+    // Phase 4.1: a small, purely additive "holding breath" cue during the
+    // major-event lifecycle's own anticipation phase (already an existing,
+    // protected phase — see musicEventDirector.ts's PHASE_DURATIONS; this
+    // reads it, never changes its duration/gating) — a slight FOV tighten
+    // plus a barely-there forward creep, both fed into the SAME existing
+    // decaying-impulse/FOV mechanics below rather than any new camera
+    // system, so the actual event impulse still lands as the release right
+    // after. This is what turns "beat happens -> camera reacts" into
+    // "music builds -> camera holds -> event lands -> camera releases".
+    const anticipationBuild =
+      majorEventState.phase === 'anticipation'
+        ? THREE.MathUtils.clamp(majorEventState.phaseTime / PHASE_DURATIONS.anticipation, 0, 1) * majorEventState.intensity
+        : 0;
+    // Phase 5 step 5: eased copy used only for the position pull-back below
+    // (see anticipationPullback's declaration) — removes the single-frame
+    // step anticipationBuild itself takes the instant the phase leaves
+    // 'anticipation', without touching the FOV use of the raw value (which
+    // was already smoothed through currentFov's own ease).
+    anticipationPullback.current += (anticipationBuild - anticipationPullback.current) * (1 - Math.exp(-dt * 10));
 
-    t.current = ((t.current + (speed.current * dt) / route.length) % 1 + 1) % 1;
+    // Phase 2: an explicit user pause should freeze the world in place —
+    // not the pre-upload/post-track-end idle camera cruise (deliberately
+    // NOT gated the same way), just genuinely-paused playback. Everything
+    // else below (camera placement from the current/frozen `t`, mode
+    // blend, orientation, FOV, first/third-person toggle) still runs every
+    // frame exactly as before, so the view stays fully responsive — it
+    // just stops advancing forward. Read imperatively (no subscription/
+    // re-render) since this only needs a single per-frame boolean.
+    const shouldAdvance = useAudioStore.getState().status !== 'paused';
+
+    if (shouldAdvance) stepSpeed(speed, dt, f);
+    cameraMotionState.speed = speed.current;
+    // Shared 0..1 "how fast does this feel" fraction (see musicController's
+    // speedPerceptionFrac) — reused below for both FOV and the follow-
+    // distance/height adjustment, anchored to the real cruise range rather
+    // than the rarely-reached MAX_SPEED_CAP so it actually moves during
+    // normal play. Already smooth (derived from speed.current, itself
+    // exponentially tracked in stepSpeed), so no extra easing needed here.
+    const speedPerception = speedPerceptionFrac(speed.current);
+
+    if (shouldAdvance) {
+      t.current = (((t.current + (speed.current * dt) / route.length) % 1) + 1) % 1;
+    }
     const frame = route.getFrameAt(t.current);
 
     // Publish the character's ground frame for Character.tsx to read.
@@ -174,7 +250,9 @@ export function CameraRig({ featureFrame, route, world }: SceneProps) {
     // never a timer) — the gameplay chase camera below stays the default
     // and this only ever blends briefly toward an alternate framing.
     const district = route.getDistrictInfoAt(t.current).district;
-    stepCinematicDirector(dt, f, state.clock.elapsedTime, frame.position, district, world);
+    if (shouldAdvance) {
+      stepCinematicDirector(dt, f, state.clock.elapsedTime, frame.position, district, world.landmarkPositions);
+    }
 
     const decay = Math.exp(-dt * 7);
     impulseForward.current *= decay;
@@ -187,17 +265,26 @@ export function CameraRig({ featureFrame, route, world }: SceneProps) {
 
     // --- Third-person chase position: behind and above the character,
     // smoothed so it lags slightly rather than rigidly tracking — a chase
-    // camera, not a rigidly-attached one.
+    // camera, not a rigidly-attached one. Phase 5 step 2: a restrained
+    // speed-scaled pull-back/rise on top of the fixed base distance/height
+    // — at higher perceived speed the camera sits a bit further back and a
+    // bit higher, showing more incoming road (a classic racing-game cue),
+    // easing back to the tighter base framing as speed drops. Small
+    // enough to stay a framing nudge, not a second FOV effect, and it
+    // inherits the same chaseLag smoothing as everything else below so it
+    // can't itself introduce any pop.
+    const dynamicFollowDist = FOLLOW_DIST + speedPerception * 2.2;
+    const dynamicFollowHeight = FOLLOW_HEIGHT + speedPerception * 0.9;
     const thirdPersonTarget = frame.position
       .clone()
-      .addScaledVector(frame.tangent, -FOLLOW_DIST)
+      .addScaledVector(frame.tangent, -dynamicFollowDist)
       .addScaledVector(frame.right, impulseLateral.current * 0.5)
-      .addScaledVector(frame.up, FOLLOW_HEIGHT + altitudeDive * 0.5 + impulseVertical.current * 0.5);
+      .addScaledVector(frame.up, dynamicFollowHeight + altitudeDive * 0.5 + impulseVertical.current * 0.5);
     if (!chaseLag.current) chaseLag.current = thirdPersonTarget.clone();
     chaseLag.current.lerp(thirdPersonTarget, 1 - Math.exp(-dt * 5));
     const thirdPersonPos = chaseLag.current
       .clone()
-      .addScaledVector(frame.tangent, impulseForward.current * 0.6);
+      .addScaledVector(frame.tangent, impulseForward.current * 0.6 - anticipationPullback.current * 0.35);
 
     // --- First-person head position: exactly at the character's eyes.
     const firstPersonPos = frame.position
@@ -233,20 +320,21 @@ export function CameraRig({ featureFrame, route, world }: SceneProps) {
     // --- Orientation: stable, world-up-referenced, never a Frenet frame.
     smoothedUp.current.lerp(frame.up, 1 - Math.exp(-dt * 3)).normalize();
 
-    let curvatureBank = 0;
+    let rawCurvatureBank = 0;
     if (prevTangent.current) {
       const cross = new THREE.Vector3().crossVectors(prevTangent.current, frame.tangent);
       const turnRate = cross.y / Math.max(dt, 1e-4);
       const energyScale = 0.45 + 0.3 * f.energy;
       const majorScale = 1 + majorEnvelope * 1.6;
       const bankLimit = 0.18 * majorScale;
-      curvatureBank = THREE.MathUtils.clamp(-turnRate * 0.07 * energyScale * majorScale, -bankLimit, bankLimit);
+      rawCurvatureBank = THREE.MathUtils.clamp(-turnRate * 0.07 * energyScale * majorScale, -bankLimit, bankLimit);
     }
     prevTangent.current = frame.tangent.clone();
+    smoothedCurvatureBank.current += (rawCurvatureBank - smoothedCurvatureBank.current) * (1 - Math.exp(-dt * 8));
 
     // Third-person stays level (a chase cam banking with the road reads as
     // nauseating); only first-person inherits the route's bank.
-    const bank = THREE.MathUtils.clamp((curvatureBank + beatBank.current) * modeBlend.current, -0.5, 0.5);
+    const bank = THREE.MathUtils.clamp((smoothedCurvatureBank.current + beatBank.current) * modeBlend.current, -0.5, 0.5);
     const bankedUp = smoothedUp.current.clone().applyAxisAngle(frame.tangent, bank);
     camera.up.copy(bankedUp);
 
@@ -258,8 +346,8 @@ export function CameraRig({ featureFrame, route, world }: SceneProps) {
     // ahead down the route, nudged by the rotational "glance" impulse.
     const thirdPersonLook = frame.position
       .clone()
-      .addScaledVector(frame.tangent, 5)
-      .addScaledVector(frame.up, 1.5);
+      .addScaledVector(frame.tangent, CHASE_LOOK_AHEAD)
+      .addScaledVector(frame.up, CHASE_LOOK_HEIGHT);
     const firstPersonLook = position
       .clone()
       .addScaledVector(frame.tangent, LOOK_AHEAD)
@@ -270,10 +358,18 @@ export function CameraRig({ featureFrame, route, world }: SceneProps) {
     camera.lookAt(lookTarget);
 
     // --- FOV: base + speed-driven widening (a classic speed cue, tied to
-    // actual travel speed) + the FOV impulse on top.
-    const speedFrac = THREE.MathUtils.clamp(speed.current / MAX_SPEED_CAP, 0, 1);
-    const targetFov = BASE_FOV + speedFrac * 14 + impactFov.current;
-    currentFov.current += (targetFov - currentFov.current) * (1 - Math.exp(-dt * 11));
+    // actual travel speed) + the FOV impulse on top, with a slight
+    // anticipation-phase tighten right before a major event lands (see
+    // anticipationBuild above) — the lens visibly holds/narrows for a beat,
+    // then the event's own impactFov burst releases it outward. Phase 5
+    // step 2: now driven by speedPerception (anchored to the real cruise
+    // range, computed once above) instead of a raw fraction of
+    // MAX_SPEED_CAP — previously cruise speed only ever reached ~7-25% of
+    // that denominator, so this widening was almost invisible during
+    // normal play; now a full-energy cruise alone reaches a clearly
+    // perceptible widen, with a bit more still available for drop bursts.
+    const targetFov = BASE_FOV + speedPerception * 14 + impactFov.current - anticipationBuild * 4.5;
+    currentFov.current += (targetFov - currentFov.current) * (1 - Math.exp(-dt * 9));
     if (camera instanceof THREE.PerspectiveCamera) {
       camera.fov = currentFov.current;
       camera.updateProjectionMatrix();

@@ -104,6 +104,23 @@ export function stepMusicEventDirector(
   }
 }
 
+/** Clears the major-event lifecycle back to idle and forgets the previous
+ *  track's cooldown timer — called on a new track load or a seek (see
+ *  audioStore's `resetToken`), so a stale mid-lifecycle phase or a
+ *  wall-clock-anchored `lastMajorEventTime` from before the jump can't
+ *  leak into the new playback position. */
+export function resetMusicEventDirector(): void {
+  majorEventState.phase = 'idle';
+  majorEventState.phaseTime = 0;
+  majorEventState.intensity = 0;
+  majorEventState.impactEventId = 0;
+  majorEventState.originPosition.set(0, 0, 0);
+  impactCounter = 0;
+  lastMajorEventTime = -999;
+  dropConsumer.lastId = -1;
+  shiftConsumer.lastId = -1;
+}
+
 /** A continuous 0..1 envelope for the current major-event phase — rises
  *  through anticipation, peaks at impact, decays through reaction and a
  *  faint tail through recovery. Safe to read every frame from anywhere. */

@@ -82,12 +82,23 @@ export interface DistrictInfo {
   corridorRadius: number;
 }
 
-export interface RouteData {
+// Generic over the region/district string type (defaults to cyberpunk's own
+// District union) purely so genuinely shared consumers — CameraRig.tsx,
+// cinematicDirector.ts — can accept a route from ANY environment via the
+// widened `RouteData<string>` without needing to know about cyberpunk's
+// specific district names. R only ever appears in output positions here
+// (the district field/return value), so `RouteData<District>` (what
+// generateRoute below actually returns, unchanged) is safely assignable to
+// `RouteData<string>` — a type-only change, no runtime behavior differs.
+export interface RouteData<R extends string = District> {
   curve: THREE.CatmullRomCurve3;
   length: number;
-  anchors: Anchor[];
+  // Typed via R (not the concrete `Anchor` interface) for the same reason
+  // as getDistrictInfoAt below — so RouteData<District> (cyberpunk, via
+  // generateRoute) stays structurally assignable to RouteData<string>.
+  anchors: { position: THREE.Vector3; district: R; corridorRadius: number; isLandmark: boolean }[];
   getFrameAt(t: number): RouteFrame;
-  getDistrictInfoAt(t: number): DistrictInfo;
+  getDistrictInfoAt(t: number): { district: R; corridorRadius: number };
 }
 
 function buildDistrictSequence(rng: Rng, count: number): District[] {
