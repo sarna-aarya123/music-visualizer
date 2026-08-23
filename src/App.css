@@ -28,6 +28,7 @@
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 13px;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .panel button {
@@ -53,31 +54,200 @@
   opacity: 0.8;
 }
 
-.error {
-  color: #ff8a8a;
+.transport {
+  min-width: 320px;
 }
 
-.transport {
-  min-width: 260px;
+/* Compact square icon buttons (restart/play-pause/mute) — same visual
+   language as .panel button, just sized for a glyph instead of a label. */
+.icon-btn {
+  background: rgba(126, 249, 255, 0.12);
+  border: 1px solid rgba(126, 249, 255, 0.4);
+  color: #cdf9ff;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: rgba(126, 249, 255, 0.22);
+  border-color: rgba(126, 249, 255, 0.65);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.play-btn {
+  font-size: 12px;
 }
 
 .progress-track {
+  position: relative;
   flex: 1;
   height: 4px;
   background: rgba(255, 255, 255, 0.15);
   border-radius: 2px;
-  overflow: hidden;
+  overflow: visible;
+  touch-action: none;
+}
+
+.progress-track.seekable {
+  cursor: pointer;
+}
+
+/* Widen the hit target without widening the visible track — a 4px bar is
+   too thin to comfortably grab. */
+.progress-track.seekable::before {
+  content: '';
+  position: absolute;
+  inset: -8px 0;
 }
 
 .progress-fill {
   height: 100%;
   background: #7ef9ff;
+  border-radius: 2px;
+  pointer-events: none;
+  /* Glides between the 200ms UI-time-poll ticks instead of stepping —
+     off entirely while actively scrubbing (see .progress-track.scrubbing)
+     so dragging still tracks the pointer instantly. */
+  transition: width 0.18s linear;
+}
+
+.progress-track.scrubbing .progress-fill,
+.progress-track.scrubbing .progress-thumb {
+  transition: none;
+}
+
+.progress-thumb {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: #7ef9ff;
+  box-shadow: 0 0 6px rgba(126, 249, 255, 0.9);
+  transform: translateY(-50%);
+  pointer-events: none;
+  transition: left 0.18s linear;
 }
 
 .time {
   font-variant-numeric: tabular-nums;
   opacity: 0.8;
   white-space: nowrap;
+  font-size: 12px;
+}
+
+/* Minimal themed range input — matches the cyan accent used everywhere
+   else rather than the browser's default slider chrome. */
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 56px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.volume-slider:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #7ef9ff;
+  box-shadow: 0 0 6px rgba(126, 249, 255, 0.9);
+  cursor: pointer;
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: none;
+  border-radius: 50%;
+  background: #7ef9ff;
+  box-shadow: 0 0 6px rgba(126, 249, 255, 0.9);
+  cursor: pointer;
+}
+
+/* Drag-and-drop upload state — a clear, on-brand "drop here" affordance
+   rather than a generic browser file-drop outline. (.panel already
+   supplies the background/border/box-shadow transition.) */
+.upload-panel.drag-active {
+  background: rgba(126, 249, 255, 0.14);
+  border-color: rgba(126, 249, 255, 0.75);
+  box-shadow: 0 0 16px rgba(126, 249, 255, 0.25);
+}
+
+.drop-hint {
+  color: #cdf9ff;
+  font-weight: 600;
+  animation: fadeIn 0.15s ease;
+}
+
+/* A gentle, slow invitation glow on the upload button before any track has
+   ever been loaded — communicates "start here" without being distracting.
+   Removed the instant a file is chosen (see UploadPanel.tsx's `idle` class
+   condition), so it never competes with an active session. */
+@keyframes invitePulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(126, 249, 255, 0); }
+  50% { box-shadow: 0 0 14px rgba(126, 249, 255, 0.45); }
+}
+
+.upload-panel.idle button {
+  animation: invitePulse 2.6s ease-in-out infinite;
+}
+
+.upload-hint {
+  opacity: 0.6;
+  font-size: 12px;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 6px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(126, 249, 255, 0.25);
+  border-top-color: #7ef9ff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.error {
+  color: #ff8a8a;
+  animation: fadeIn 0.15s ease;
 }
 
 .fullscreen-btn {
@@ -89,4 +259,10 @@
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.fullscreen-btn:hover {
+  background: rgba(126, 249, 255, 0.12);
+  border-color: rgba(126, 249, 255, 0.4);
 }

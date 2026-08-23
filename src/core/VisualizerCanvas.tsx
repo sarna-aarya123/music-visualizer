@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { EffectComposer, Bloom, Vignette, Noise, ChromaticAberration } from '@react-three/postprocessing';
 import { FeatureUpdater } from './FeatureUpdater';
-import { CyberpunkCityScene } from '../scenes/cyberpunkCity/CyberpunkCityScene';
+import { ENVIRONMENTS, DEFAULT_ENVIRONMENT_ID } from '../scenes/registry';
+import { useEnvironmentStore } from '../state/environmentStore';
 import { featureFrame } from '../audio/featureFrame';
 import { consumeBeat, createBeatConsumerState } from '../audio/beatConsumer';
 import { getMajorEventEnvelope } from '../scenes/cyberpunkCity/world/musicEventDirector';
@@ -69,6 +70,10 @@ function PostFX() {
 }
 
 export function VisualizerCanvas() {
+  const activeId = useEnvironmentStore((s) => s.activeId);
+  const environment = ENVIRONMENTS[activeId] ?? ENVIRONMENTS[DEFAULT_ENVIRONMENT_ID];
+  const SceneComponent = environment.SceneComponent;
+
   return (
     <Canvas
       camera={{ position: [0, 5.5, 8], fov: 52, near: 0.1, far: 1400 }}
@@ -77,7 +82,10 @@ export function VisualizerCanvas() {
     >
       <color attach="background" args={['#05030c']} />
       <FeatureUpdater />
-      <CyberpunkCityScene featureFrame={featureFrame} />
+      {/* Keyed by environment id so switching environments fully remounts
+          the scene (fresh route/world/camera/character state) rather than
+          trying to reconcile two completely different geometry sets. */}
+      <SceneComponent key={activeId} featureFrame={featureFrame} />
       <PostFX />
     </Canvas>
   );

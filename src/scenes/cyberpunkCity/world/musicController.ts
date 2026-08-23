@@ -25,17 +25,35 @@ import { majorEventState } from './musicEventDirector';
  *     full major event (musicEventDirector.ts).
  */
 
-export const MIN_SPEED = 4;
-export const MAX_SPEED = 15;
-export const MAX_SPEED_CAP = 60;
+// Phase 5: retuned against the route's actual measured length (~2,189
+// world units for the current WORLD_SEED) and a 3-4 minute song target —
+// not an arbitrary multiplier. At the old MAX_SPEED=15, a full lap took
+// ~146s even at peak energy, and MIN_SPEED=4 meant ~550s (nearly 10
+// minutes) at calm — the character could go an entire song without
+// completing one lap, which is the direct cause of "everything feels
+// slow" regardless of how reactive the world was. Retuned so a calm
+// section still completes a lap within roughly one song (MIN_SPEED lap
+// ≈ 219s) while a sustained high-energy cruise laps in about a minute
+// (MAX_SPEED lap ≈ 64s) — genuinely brisk, arcade-paced, without being
+// so fast the route/world reads as a blur.
+export const MIN_SPEED = 10;
+export const MAX_SPEED = 34;
+// Raised alongside MAX_SPEED so a full-energy drop (MAX_SPEED *
+// DROP_MULTIPLIER ≈ 78) still has headroom below the cap rather than being
+// clipped by a ceiling sized for the old, much lower cruise range.
+export const MAX_SPEED_CAP = 95;
 
 const BURST_BASE = 2.5;
 const BURST_SCALE = 7;
 const MAJOR_LAUNCH_BASE = 14;
 const MAJOR_LAUNCH_SCALE = 22;
 
-const SPEED_TRACK_RATE_UP = 3.2;
-const SPEED_TRACK_RATE_DOWN = 1.4;
+// Slightly sharpened (was 3.2/1.4) — a modest tightening, not a rewrite of
+// the acceleration model. Time constants now ~0.26s up / ~0.59s down,
+// giving acceleration/deceleration a bit more punch to match the wider
+// speed range above.
+const SPEED_TRACK_RATE_UP = 3.8;
+const SPEED_TRACK_RATE_DOWN = 1.7;
 
 const DROP_MULTIPLIER = 2.3;
 const DROP_HOLD_SECONDS = 4.5;
@@ -47,6 +65,23 @@ const MULTIPLIER_TRACK_RATE = 1.3; // how fast the *actual* multiplier follows i
 export function computeTargetSpeed(energy: number): number {
   const eased = THREE.MathUtils.smoothstep(energy, 0, 1);
   return THREE.MathUtils.lerp(MIN_SPEED, MAX_SPEED, eased);
+}
+
+// Phase 5 step 2: a single shared "how fast does this feel" fraction, used
+// by every speed-driven visual cue (camera FOV, particle parallax,
+// guardrail pulse, camera follow distance/height) instead of each one
+// separately normalizing against MAX_SPEED_CAP. MAX_SPEED_CAP (95) is a
+// rarely-reached burst ceiling — normalizing everyday cruise speed against
+// it was exactly why those cues stayed nearly flat during normal play (see
+// Phase 5 investigation). Anchored instead to the real cruise range
+// (MIN_SPEED..MAX_SPEED*1.15): reaching MAX_SPEED during a sustained
+// high-energy cruise already reads as ~83% "fast", leaving a modest amount
+// of headroom above cruise for drop-driven bursts to still register as
+// "even faster" without needing an extreme, rarely-touched top end.
+const SPEED_PERCEPTION_CEIL = MAX_SPEED * 1.15;
+
+export function speedPerceptionFrac(speed: number): number {
+  return THREE.MathUtils.clamp((speed - MIN_SPEED) / (SPEED_PERCEPTION_CEIL - MIN_SPEED), 0, 1);
 }
 
 export interface SpeedState {

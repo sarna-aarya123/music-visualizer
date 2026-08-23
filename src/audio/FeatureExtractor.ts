@@ -42,6 +42,14 @@ const ENERGY_ENV_FAST_RATE = 2.2;
 const SECTION_TREND_THRESHOLD = 0.16;
 const SECTION_COOLDOWN = 4;
 
+// A deliberately separate, even slower trailing average of `energy` than
+// ENERGY_ENV_SLOW_RATE above — that one is tuned specifically for drop/
+// breakdown trend detection and must not be repurposed (touching it would
+// risk changing detection behavior). This is purely a "song mood" signal
+// for slow visual baselines: ~5.5s time constant, so it genuinely reflects
+// the last several seconds of the track, not the last beat.
+const SECTION_MOOD_RATE = 0.18;
+
 const IMPULSE_DECAY_RATE = 7;
 
 function expSmooth(prev: number, next: number, ratePerSec: number, dt: number): number {
@@ -104,6 +112,9 @@ export class FeatureExtractor {
   private prevFreqData: Uint8Array<ArrayBuffer>;
   private bins: Record<BandName, [number, number]>;
 
+  // All adaptive/stateful fields below are (re)initialized by resetState(),
+  // shared between the constructor and the public reset() — see that
+  // method's doc comment for why this matters.
   private smoothed = { bass: 0, lowMid: 0, mid: 0, high: 0, energy: 0 };
 
   private kickDetector = new FluxOnsetDetector();
@@ -131,6 +142,8 @@ export class FeatureExtractor {
 
   private impactSmoothed = 0;
 
+  private sectionMood = 0;
+
   constructor(private analyser: AnalyserNode, sampleRate: number) {
     this.freqData = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
     this.prevFreqData = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
@@ -148,6 +161,52 @@ export class FeatureExtractor {
       mid: toBins(BAND_HZ.mid),
       high: toBins(BAND_HZ.high),
     };
+
+    this.resetState();
+  }
+
+  /** Clears every adaptive baseline/onset-detector/counter back to its
+   *  starting value — called on construction, and again whenever playback
+   *  has a discontinuity (a new track loaded, or a seek) so stale
+   *  baselines from before the jump can't misfire onset detection against
+   *  the new audio. Deliberately does NOT touch `freqData`/`prevFreqData`/
+   *  `bins`, which depend on the analyser/sample rate, not on playback
+   *  position. */
+  reset(): void {
+    this.resetState();
+  }
+
+  private resetState(): void {
+    this.smoothed = { bass: 0, lowMid: 0, mid: 0, high: 0, energy: 0 };
+
+    this.kickDetector = new FluxOnsetDetector();
+    this.snareDetector = new FluxOnsetDetector();
+    this.hihatDetector = new FluxOnsetDetector();
+    this.shiftDetector = new FluxOnsetDetector();
+
+    this.beatCounter = 0;
+    this.snareCounter = 0;
+    this.hihatCounter = 0;
+    this.shiftCounter = 0;
+    this.dropCounter = 0;
+    this.breakdownCounter = 0;
+    this.lastBeatTimestamp = -999;
+
+    this.specBaseLow = 0.4;
+    this.specBaseMid = 0.3;
+    this.specBaseHigh = 0.3;
+    this.shiftSmoothed = 0;
+
+    this.energyEnvSlow = 0;
+    this.energyEnvFast = 0;
+    this.dropCooldown = 0;
+    this.breakdownCooldown = 0;
+
+    this.impactSmoothed = 0;
+
+    this.sectionMood = 0;
+
+    if (this.prevFreqData) this.prevFreqData.fill(0);
   }
 
   private bandEnergy([lo, hi]: [number, number]): number {
@@ -297,6 +356,13 @@ export class FeatureExtractor {
     frame.high = this.smoothed.high;
     frame.energy = this.smoothed.energy;
     frame.time = time;
+
+    // Section mood: a completely independent, much slower trailing average
+    // of energy than anything the detectors above use — see the constant's
+    // comment. Read by slow visual baselines only, never by anything that
+    // should react quickly.
+    this.sectionMood = expSmooth(this.sectionMood, energy, SECTION_MOOD_RATE, safeDt);
+    frame.sectionMood = this.sectionMood;
   }
 
   private smoothTowards(prev: number, next: number, dt: number): number {
