@@ -1,4 +1,14 @@
-# Next Phase — Spectacle, Events & the World Director
+# PLAN — Next Phase: Spectacle, Events & the World Director
+
+> **Status: PROPOSED, NOT APPROVED. No implementation has started.**
+> The user asked for this investigation while away and wanted to review it
+> before any coding begins. Do not start building without their go-ahead.
+>
+> **Read `HANDOFF.md` first** for current architecture, conventions,
+> protected systems and known pitfalls.
+>
+> **Two questions still open for the user:** (1) which stages to start
+> with, and (2) whether Stage A (offline audio pre-analysis) is in scope.
 
 Read-only investigation. No code written. Prepared for review.
 
