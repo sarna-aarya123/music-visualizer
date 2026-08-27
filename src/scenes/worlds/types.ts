@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { SkyConfig } from '../shared/ProceduralSky';
 import type { ToonSpec } from '../shared/toon';
 import type { RouteData } from '../cyberpunkCity/world/routeGenerator';
+import type { AnimatedInstances } from '../shared/OutlinedInstances';
 
 /**
  * A world is data: a sky, a fog/light mood, a path to run along, and a set
@@ -25,6 +26,11 @@ export interface PropGroup {
     /** Added in proportion to the major-event envelope. */
     event?: number;
   };
+  /** Opt-in: a subset of this group's instances recomputed every frame
+   *  instead of baked once. Omit for the plain static path — see
+   *  `OutlinedInstances`'s `AnimatedInstances` doc for the per-frame
+   *  contract. Stage 1 plumbing only; no world populates this yet. */
+  animated?: AnimatedInstances;
 }
 
 export interface PathConfig {
