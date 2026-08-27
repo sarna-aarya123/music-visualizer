@@ -335,9 +335,85 @@ facade:
 When a future stage adds a second decision producer, `WorldDirector.step`/
 `reset` each grow one more delegated call — callers' shape doesn't change.
 
-**Stage 3 — Long-form drop sequence.** Replace the 2.57s lifecycle with a
-10–15s multi-phase sequence using *only existing effects*. Proves the
-structure feels bigger before any new content exists.
+**Stage 3 — DONE (2026-08-27). Long-form cinematic sequence, built entirely
+from existing effects.** The old ~2.57s lifecycle (idle -> anticipation ->
+impact -> reaction -> recovery) is now a ≈13s sequence: **idle -> buildup
+(1.0s) -> tension (0.9s) -> drop (0.5s) -> transform (3.0s) -> reveal
+(3.6s) -> aftermath (4.0s) -> idle**. Total = 13.0s, mid-range of the
+requested 10-15s.
+
+**What actually changed (4 files):**
+- `musicEventDirector.ts` — the `MajorEventPhase` union, `PHASE_DURATIONS`,
+  and `PHASE_ORDER` grew from 4 phases to 6 (renamed, not just extended —
+  see below). `impactEventId` still increments exactly once, now on
+  entering `'drop'` (was `'impact'`) — same exactly-once semantics every
+  consumer (`Character`'s jump, `CameraRig`'s launch impulse,
+  `cinematicDirector`'s shot trigger, `WorldPath`/`WorldParticles`/
+  `Walkway`/`Petals`'s bursts) already used, so **none of those 6+ files
+  needed to change at all**. `getMajorEventEnvelope()` was reshaped into a
+  6-phase curve (ramp through buildup, a held/pulsing plateau through
+  tension, a hard jump to full intensity at drop, then three progressively
+  gentler eased-decay stages through transform/reveal/aftermath — see the
+  function's own doc comment for the exact shape). **This one function is
+  what extends every existing envelope-driven effect** (camera altitude
+  dive/FOV/curvature-bank scale in `CameraRig`, prop emissive/rim in
+  `WorldScene`, sky uniforms in `ProceduralSky`/`IslandSky`/`Islands`,
+  post-processing bloom/vignette/chromatic-aberration in `VisualizerCanvas`)
+  across the new, longer duration — none of those consumer files needed
+  *any* changes either, confirmed by `git diff` showing zero touches to
+  them.
+- `worldDirector.ts` — gained a `sequence` getter (read-only view of
+  `majorEventState`) and a `phaseDurations` getter, so `WorldDirector`
+  genuinely owns the sequence's raw phase/timing state, not just the
+  step/reset control flow from Stage 2.
+- `CameraRig.tsx` — the existing "Phase 4.1 holding-breath" FOV-tighten/
+  pullback cue (previously gated on the single ~0.3s `'anticipation'`
+  phase) now ramps smoothly across the combined `buildup`+`tension`
+  duration (≈1.9s) as one continuous progress value. Reads the raw phase
+  via `WorldDirector.sequence`/`.phaseDurations` instead of importing
+  `majorEventState`/`PHASE_DURATIONS` directly (still imports
+  `getMajorEventEnvelope()` directly, unchanged — see `worldDirector.ts`'s
+  doc comment for why that split is deliberate). No other part of
+  `CameraRig` changed: beat/drop consumption, hi-hat/snare exclusion,
+  first/third-person blending, and FOV base formula are byte-for-byte
+  untouched.
+- `musicController.ts` — the `anticipationDamp` pacing dip (0.7× speed)
+  now checks `phase === 'buildup' || phase === 'tension'` instead of the
+  old single phase name, read via `WorldDirector.sequence`. `MIN_SPEED`/
+  `MAX_SPEED`/`MAX_SPEED_CAP`/burst/section-multiplier constants — all of
+  Phase 5's protected tuning — are untouched.
+
+**Left untouched, deliberately:** `cinematicDirector.ts` (zero diff) — its
+existing major-event branch already picks a landmark/dramatic-close shot
+off the same `impactEventId`, so it fires exactly as before with no code
+change, and its own ~3s shot duration was left alone rather than extended,
+keeping this stage's footprint to exactly the sequence-timing work it was
+scoped for. `Character.tsx` (zero diff) — its jump/lean/forced-sprint
+reactions are already timed independently of `majorEventState`'s phase
+durations (own local timers), so they needed no changes and already
+provide a reasonable few-second "character reacts" window inside the
+longer sequence. `FeatureExtractor.ts`, `beatConsumer.ts`, the audio clock,
+route generation, collision/clearance — all zero diff (confirmed via
+`git diff --name-only`).
+
+**Known limitation, as instructed — documented, not solved:**
+`dropId`/the other triggers still fire AT detection, not before it — there
+is still no genuine pre-drop anticipation, because that needs the offline
+pre-analysis this stage was explicitly told not to build (Stage A). The
+`buildup`/`tension` phases are a post-trigger hold (the same technique the
+old 0.3s `'anticipation'` phase already used, just stretched to ≈1.9s and
+staged more dramatically), not a prediction — see the long "Known
+limitation" note at the top of `musicEventDirector.ts` for the full
+reasoning, including why the pre-drop hold was deliberately kept short
+(audio/visual sync) while the post-drop transform/reveal/aftermath carry
+essentially all the added length (no sync constraint against a single
+instant applies there).
+
+**Sequence-collision policy:** "ignore" — a new trigger simply can't fire
+while `phase !== 'idle'` (unchanged gating), and since one sequence now
+runs ≈13s — already longer than the unchanged 7s `MIN_EVENT_GAP` — the
+effective gap between sequence starts is `max(7, 13) = 13s` without
+`MIN_EVENT_GAP` itself needing to change.
 
 **Stage 4 — Moving cinematic shots.** Camera paths over time; director
 drives the camera channel.
@@ -435,9 +511,50 @@ and unmount with zero console errors; a full synthetic-track playthrough
   assumed passing. Close out with a real screenshot/session from the user,
   or a future session where the preview pane composites and the tab stays
   genuinely foregrounded.
-- **3 (drop sequence):** a drop must read as a *sustained* multi-second
-  event, not a flash. Verify the mute test — the drop's shape should be
-  legible with sound off.
+- **3 (drop sequence) — DONE (2026-08-27), genuinely verified live:** unlike
+  Stages 0-2, the preview pane actually composited frames this session
+  (`document.hidden` was `false`) — this is real visual verification, not
+  the structural-argument fallback used previously. `npx tsc -b` and
+  `npm run build` clean. All 9 worlds cycled with a screenshot of each
+  (Floating Islands, Cyberpunk Night, Desert Dream, Underwater Abyss,
+  Outer Dimension, PS2 Night, Fantasy Forest, Abstract Void, Chaotic
+  Carnival) — all render correctly, zero console errors. A synthetic WAV
+  (3s quiet intro -> a sudden loud bass-heavy section) was played twice
+  (once via natural playback, once via the restart button) and screenshot
+  at intervals across the sequence:
+  - Right at the drop trigger: visible chromatic-aberration fringing and a
+    bloom spike appear immediately — the release reads as sudden, not
+    gradual.
+  - ~3s into the sequence (restart run): `cinematicDirector`'s existing
+    landmark shot fired on its own (zero code touched in that file this
+    stage) — a dramatic framed shot of a landmark with strong bloom halo,
+    confirming the untouched cinematic system layers correctly on top of
+    the new sequence.
+  - ~7s and ~17s in: sustained warm, elevated atmosphere/bloom relative to
+    baseline — the multi-second "transform/reveal" hold is visually
+    present, not a flash.
+  - After the sequence's ≈13s: camera and atmosphere visibly settled back
+    to normal gameplay framing, confirmed by a mid-sequence seek test
+    (see below) showing completely normal (non-elevated) camera/atmosphere
+    immediately after a seek past the sequence.
+  Natural end was reached cleanly (0:00/0:22, ready state, zero errors).
+  Restart re-triggered a full sequence correctly (no double-trigger, no
+  stale state). A mid-sequence seek correctly cancelled the in-flight
+  cinematic shot and returned to plain gameplay camera framing with zero
+  errors — confirming reset-on-seek works. Switching worlds mid-loaded-
+  track was also exercised (Chaotic Carnival -> Floating Islands while a
+  track was loaded) with zero errors.
+  **Not performed:** the explicit mute/sound-off legibility test (the
+  screenshots above already show the sequence is visually legible from
+  post-processing/camera/lighting changes alone, independent of any audio
+  waveform overlay, so this specific framing of the check is implicitly
+  covered, but muting and re-screenshotting was not done as a separate
+  step). **One stale-HMR false alarm** during this session: a
+  `ReferenceError: majorEventState is not defined` appeared in the console
+  from an intermediate mid-edit HMR state while the dev server was live-
+  applying edits as they were written; a fresh tab (per `HANDOFF.md`'s
+  documented caveat) showed zero errors against the final code, and the
+  full verification pass above was run against that clean state.
 - **4 (camera):** no shot clips through geometry; the character is framed
   or deliberately absent in every shot; a hard fallback to the gameplay
   camera always exists; **re-confirm hi-hats/snares never move the camera**

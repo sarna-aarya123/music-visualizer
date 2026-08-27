@@ -14,7 +14,8 @@ import {
 } from './world/musicController';
 import { cameraMotionState } from './world/cameraMotionState';
 import { characterMotionState } from './world/characterMotionState';
-import { getMajorEventEnvelope, majorEventState, PHASE_DURATIONS } from './world/musicEventDirector';
+import { getMajorEventEnvelope } from './world/musicEventDirector';
+import { WorldDirector } from './world/worldDirector';
 import { cinematicState, computeShotTransform, getCinematicBlend, stepCinematicDirector } from './world/cinematicDirector';
 import { useViewModeStore } from '../../state/viewModeStore';
 import { useAudioStore } from '../../state/audioStore';
@@ -46,6 +47,14 @@ const LOOK_AHEAD = 16;
 const CHASE_LOOK_AHEAD = 3.2; // third-person look target: how far ahead of the character
 const CHASE_LOOK_HEIGHT = 0.9; // third-person look target: how far above the character
 const MODE_BLEND_RATE = 1.6; // per second — the third/first-person transition
+
+// Phase 6 Stage 3: the sequence's pre-drop hold now spans two phases
+// ('buildup' then 'tension') instead of the old single ~0.3s
+// 'anticipation' phase — combined so the FOV-tighten/pullback cue below
+// ramps smoothly across both as one continuous ≈1.9s hold rather than
+// resetting partway through. Read once at module scope since
+// PHASE_DURATIONS is a fixed export, not per-frame state.
+const PRE_DROP_DURATION = WorldDirector.phaseDurations.buildup + WorldDirector.phaseDurations.tension;
 
 /** Below this, a beat produces no camera reaction at all — "almost no
  *  camera movement" for normal bass. Above it, a beat qualifies as a real
@@ -120,8 +129,8 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
   const beatBank = useRef(0);
   const currentFov = useRef(BASE_FOV);
   // Phase 5 step 5: anticipationBuild itself (see below) steps from its
-  // peak straight to 0 the instant majorEventState.phase leaves
-  // 'anticipation' — the FOV use of it is already smoothed through
+  // peak straight to 0 the instant the sequence leaves its pre-drop hold
+  // ('buildup'/'tension') — the FOV use of it is already smoothed through
   // currentFov's own ease, but the third-person position pull-back uses it
   // directly, with no ease of its own in between. One small ease ref
   // closes that gap without touching the impulse/threshold system itself.
@@ -182,7 +191,8 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
       impactFov.current = Math.max(impactFov.current, 15);
     }
 
-    const majorHit = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorState);
+    const seq = WorldDirector.sequence;
+    const majorHit = consumeEvent(seq.impactEventId, seq.intensity, majorState);
     if (majorHit > 0) {
       applyMajorLaunch(speed, majorHit);
       impulseForward.current = Math.max(impulseForward.current, majorHit * 2.2);
@@ -192,23 +202,29 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
     const majorEnvelope = getMajorEventEnvelope();
     const altitudeDive = -majorEnvelope * 2.4;
 
-    // Phase 4.1: a small, purely additive "holding breath" cue during the
-    // major-event lifecycle's own anticipation phase (already an existing,
-    // protected phase — see musicEventDirector.ts's PHASE_DURATIONS; this
-    // reads it, never changes its duration/gating) — a slight FOV tighten
-    // plus a barely-there forward creep, both fed into the SAME existing
-    // decaying-impulse/FOV mechanics below rather than any new camera
-    // system, so the actual event impulse still lands as the release right
-    // after. This is what turns "beat happens -> camera reacts" into
-    // "music builds -> camera holds -> event lands -> camera releases".
+    // Phase 4.1, extended by Phase 6 Stage 3: a small, purely additive
+    // "holding breath" cue during the sequence's pre-drop hold — now
+    // 'buildup' then 'tension' (≈1.9s combined, was a single ~0.3s
+    // 'anticipation' phase) — a slight FOV tighten plus a barely-there
+    // forward creep, both fed into the SAME existing decaying-impulse/FOV
+    // mechanics below rather than any new camera system, so the actual
+    // event impulse still lands as the release right after. This is what
+    // turns "beat happens -> camera reacts" into "music builds -> camera
+    // holds -> event lands -> camera releases" — just stretched across a
+    // longer, more noticeable hold than before. Progress ramps smoothly
+    // across both phases as one continuous 0..1 (see PRE_DROP_DURATION).
+    const preDropElapsed =
+      seq.phase === 'buildup'
+        ? seq.phaseTime
+        : seq.phase === 'tension'
+          ? WorldDirector.phaseDurations.buildup + seq.phaseTime
+          : null;
     const anticipationBuild =
-      majorEventState.phase === 'anticipation'
-        ? THREE.MathUtils.clamp(majorEventState.phaseTime / PHASE_DURATIONS.anticipation, 0, 1) * majorEventState.intensity
-        : 0;
+      preDropElapsed !== null ? THREE.MathUtils.clamp(preDropElapsed / PRE_DROP_DURATION, 0, 1) * seq.intensity : 0;
     // Phase 5 step 5: eased copy used only for the position pull-back below
     // (see anticipationPullback's declaration) — removes the single-frame
-    // step anticipationBuild itself takes the instant the phase leaves
-    // 'anticipation', without touching the FOV use of the raw value (which
+    // step anticipationBuild itself takes the instant the phase leaves the
+    // pre-drop hold, without touching the FOV use of the raw value (which
     // was already smoothed through currentFov's own ease).
     anticipationPullback.current += (anticipationBuild - anticipationPullback.current) * (1 - Math.exp(-dt * 10));
 
