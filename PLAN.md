@@ -1,16 +1,21 @@
 # PLAN — Next Phase: Spectacle, Events & the World Director
 
-> **Status: PROPOSED, NOT APPROVED. No implementation has started.**
-> The user asked for this investigation while away and wanted to review it
-> before any coding begins. Do not start building without their go-ahead.
+> **Status (2026-08-27): Stage 0 (investigation) and Stage 1 (dynamic
+> instance-matrix plumbing) are complete and implemented. Stage 2 onward
+> (WorldDirector, event archetypes, moving props, anything visual) has
+> **not** started and needs approval before work resumes — see §7.
 >
 > **Read `HANDOFF.md` first** for current architecture, conventions,
 > protected systems and known pitfalls.
 >
-> **Two questions still open for the user:** (1) which stages to start
-> with, and (2) whether Stage A (offline audio pre-analysis) is in scope.
+> **Two questions still open for the user:** (1) which stage to do next
+> (2 is the natural next step — a parity-only director refactor — but
+> nothing has been assumed), and (2) whether Stage A (offline audio
+> pre-analysis) is in scope.
 
-Read-only investigation. No code written. Prepared for review.
+Originally a read-only investigation prepared for review; Stages 0 and 1
+have since been executed exactly as scoped and approved. See §7 for what
+actually shipped in Stage 1 and §8 for how it was verified.
 
 > **Correction on scope:** there are **9 worlds**, not 11. The two
 > pre-cel-shading environments ("Cyberpunk City (original)" and "Fantasy
@@ -237,14 +242,53 @@ world's generator. No new geometry is required for the first pass.
 
 ## 7. Recommended implementation order
 
-**Stage 0 — Perf spike (read-only + throwaway).** Measure the cost of
-rewriting instance matrices per frame at realistic counts in the heaviest
-world. Establishes the animated-instance budget before anything is designed
-around it.
+**Stage 0 — DONE (2026-08-27).** Investigation only, no code written.
+Findings (full detail was reported to the user at the time; kept short
+here):
 
-**Stage 1 — Dynamic prop animation.** `OutlinedInstances` supports dynamic
-matrices; `PropGroup` gains an optional animation channel. Static groups
-keep the existing write-once path. *No new visual features yet.*
+- Real instance counts per world, pulled from the actual generators, are
+  small by WebGL standards — ~220 (Abstract Void) to ~1,660 (Cyberpunk
+  Night, dominated by ~1,275 emissive window instances). Rewriting every
+  instance in the largest group every frame would cost well under 0.5ms
+  of JS and a trivial GPU `bufferSubData` — comparable to per-frame work
+  `WorldParticles.tsx` already does today for 300 points.
+- The app's actual headroom constraint is fragment/fill-rate (custom toon
+  shader × Bloom/Vignette/ChromaticAberration/Noise × up to 1.75 dpr), not
+  CPU or instance-matrix upload cost. Stage 1 doesn't touch triangle count
+  or fragment cost, so it doesn't compete with that budget.
+- `three@0.169.0` (confirmed in `node_modules/three/src/core/BufferAttribute.js`
+  and `WebGLAttributes.js`) supports partial buffer uploads via
+  `attribute.addUpdateRange(start, count)` — unused anywhere in this
+  codebase before Stage 1, now the mechanism Stage 1 uses so an animated
+  subset of a large group doesn't force a full-buffer re-upload.
+- No throwaway perf-spike code was written — the empirical FPS check was
+  folded into Stage 1's own verification instead (see §8), since Stage 1
+  is the first point actual animatable code exists to measure.
+- Full report (findings / recommended architecture / alternatives
+  considered / exact Stage 1 design) is preserved in this session's
+  transcript; this file keeps only the resulting decisions.
+
+**Stage 1 — DONE (2026-08-27). Dynamic prop animation, plumbing only.**
+`PropGroup` gained an optional `animated?: AnimatedInstances` field
+(`{ indices: number[]; sample(index, out, elapsed, dt): void }`) in
+`src/scenes/worlds/types.ts`. `OutlinedInstances.tsx` grew a conditional
+`useFrame` branch: when a group declares `animated`, its flagged indices
+are resampled every frame into the surface mesh's `instanceMatrix` via a
+single persistent scratch `THREE.Matrix4` (no per-frame allocation),
+uploaded with `addUpdateRange` per contiguous index run rather than a full
+buffer re-upload, then mirrored into the outline mesh in the *same frame*
+via the existing `copyArray` so the ink line can never lag the surface it
+traces. `WorldScene.tsx` passes `g.animated` through unchanged otherwise.
+
+**No world declares `animated` yet** — this stage is provably a no-op for
+every existing world: the branch is behind `if (!animated || ...) return`,
+and since `animated` is `undefined` everywhere, the branch cannot execute,
+not just "didn't happen to run" this time. Floating Islands (which hand-
+rolls the same upload/mirror pattern instead of using `OutlinedInstances`)
+was left untouched — folding it onto the shared component is flagged as
+follow-up debt (§9 point 7 area) for whenever it needs its first animated
+prop, not a Stage 1 prerequisite. *Still no new visual features, no new
+geometry, no event archetypes, no WorldDirector.*
 
 **Stage 2 — Director core + parity refactor.** Introduce `WorldDirector`
 and the `Sequence` model; port the existing major-event trigger and
@@ -291,6 +335,40 @@ and unmount with zero console errors; a full synthetic-track playthrough
   position and track offset. Animated instances must not regress the
   baseline beyond an agreed budget. Performance has regressed before — this
   gets measured, not assumed.
+  **Zero-animated-groups criterion (added after Stage 1):** since no world
+  populates `animated` yet, the load-bearing check for Stage 1 is that the
+  new `useFrame` branch in `OutlinedInstances` is unreachable, not merely
+  fast, for every group in every world — true by construction (`animated`
+  is `undefined` everywhere), and confirmed structurally since this
+  session's browser tool could not get the preview pane to composite
+  frames (`document.hidden` was `true` for every tab opened — the
+  known "browser preview has been unreliable" issue `HANDOFF.md` already
+  documents, not a Stage 1 regression). What *was* verified live: `tsc -b`
+  and `npm run build` clean; all 9 worlds' mount/dispose paths (the
+  `useEffect` static-upload path, which doesn't depend on `requestAnimationFrame`)
+  exercised repeatedly with zero console errors; a full ~20s synthetic
+  WAV (quiet → build → drop → cut → breakdown → return, dropped in via a
+  simulated `DragEvent`) played to completion with zero console errors.
+  A live FPS before/after capture and a runtime confirmation of the
+  animated-branch skip still need an actual screenshot/session from the
+  user, or a future session where the preview pane composites — flagged
+  as outstanding, not silently assumed passing.
+
+  **Outstanding / manual verification (not failures — blocked by tooling):**
+  1. Live FPS/frame-time before-vs-after capture in a fixed world at an
+     identical camera position and track offset.
+  2. A runtime confirmation (e.g. a temporary counter) that the animated
+     `useFrame` branch is actually skipped every frame, observed live.
+
+  Both are blocked purely by the browser tool's preview pane not
+  compositing frames in that session (`document.hidden` was `true` on
+  every tab — the pre-existing issue `HANDOFF.md` §2 already documents),
+  not by anything about the Stage 1 code. The structural argument for #2
+  (the branch is behind `if (!animated || ...) return` and no world sets
+  `animated`, so it is unreachable, not merely untriggered) still stands
+  and was verified by reading the code, not by assuming it. Close these
+  out with an actual screenshot/session from the user, or a future session
+  where the preview pane composites.
 - **2 (parity):** side-by-side capture at identical track offsets pre/post
   refactor; events fire at the same times with the same intensities. Any
   visual difference is a bug.

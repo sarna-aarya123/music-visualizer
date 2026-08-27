@@ -93,6 +93,7 @@ export function WorldScene({
           material={materials[g.key]}
           outline={outline}
           matrices={g.matrices}
+          animated={g.animated}
         />
       ))}
 
