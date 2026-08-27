@@ -4,7 +4,7 @@ import { audioEngine } from '../audio/AudioEngine';
 import { FeatureExtractor } from '../audio/FeatureExtractor';
 import { featureFrame } from '../audio/featureFrame';
 import { useAudioStore } from '../state/audioStore';
-import { resetMusicEventDirector } from '../scenes/cyberpunkCity/world/musicEventDirector';
+import { WorldDirector } from '../scenes/cyberpunkCity/world/worldDirector';
 import { resetCinematicDirector } from '../scenes/cyberpunkCity/world/cinematicDirector';
 import { resetRhythmState } from '../scenes/cyberpunkCity/world/rhythmState';
 
@@ -29,7 +29,7 @@ export function FeatureUpdater() {
   // pre-jump data.
   useEffect(() => {
     extractorRef.current?.reset();
-    resetMusicEventDirector();
+    WorldDirector.reset();
     resetCinematicDirector();
     resetRhythmState();
   }, [resetToken]);

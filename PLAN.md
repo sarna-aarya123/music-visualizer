@@ -290,10 +290,50 @@ follow-up debt (§9 point 7 area) for whenever it needs its first animated
 prop, not a Stage 1 prerequisite. *Still no new visual features, no new
 geometry, no event archetypes, no WorldDirector.*
 
-**Stage 2 — Director core + parity refactor.** Introduce `WorldDirector`
-and the `Sequence` model; port the existing major-event trigger and
-cinematic selection onto it. **Behaviour must be visually identical to
-today** — this is a pure refactor, verified as such.
+**Stage 2 — DONE (2026-08-27). Parity director refactor, foundation only.**
+This was scoped narrower than this section originally described, at the
+user's explicit direction: establish the decisions-vs-executors seam, but
+do not yet port cinematic selection onto it or introduce the `Sequence`
+model — both remain future work (see "left untouched" below).
+
+Added `src/scenes/cyberpunkCity/world/worldDirector.ts` — a thin
+`WorldDirector` facade (`step(dt, frame, cameraPosition, elapsed)` /
+`reset()`) that wraps the one decision system that exists today
+(`musicEventDirector.ts`'s major-event lifecycle) by pure delegation, in
+the same call order, with the same arguments. `musicEventDirector.ts`
+itself has **zero diff** — its behavior is untouched, only *how it gets
+called* changed. The two real control call sites were routed through the
+facade:
+- `MusicEventDirector.tsx` (the per-frame mount point) calls
+  `WorldDirector.step(...)` instead of `stepMusicEventDirector(...)`
+  directly.
+- `FeatureUpdater.tsx`'s `resetToken` effect calls `WorldDirector.reset()`
+  in place of the direct `resetMusicEventDirector()` call, alongside its
+  sibling `resetCinematicDirector()`/`resetRhythmState()` calls, which
+  were deliberately left as direct calls (see below).
+
+**Left untouched, deliberately:**
+- `cinematicDirector.ts` and `musicController.ts` — both are genuine
+  "decisions" per §3's eventual scope, but their inputs
+  (character position/tangent, district, landmarks) are camera-specific
+  and only `CameraRig` has them ready per frame. Folding them into
+  `WorldDirector.step`'s generic signature now would mean threading those
+  extra params through the facade for zero behavioral gain. They stay
+  called directly by `CameraRig`, as before.
+- The ~18 files that read `majorEventState`/`getMajorEventEnvelope`
+  directly (camera, character, world props/sky materials,
+  post-processing) — all executors in the decisions-vs-executors sense,
+  already reading published state rather than deciding anything
+  themselves. Rerouting all of them through `WorldDirector` would be a
+  large, purely mechanical diff with no behavioral upside; deferred until
+  a future stage actually changes what they need to read.
+- No `Sequence` model, no new event archetypes, no moving props, no new
+  camera triggers, no Stage A. `worldDirector.ts`'s own doc comment states
+  this scope explicitly so a future session doesn't assume more was built
+  than actually was.
+
+When a future stage adds a second decision producer, `WorldDirector.step`/
+`reset` each grow one more delegated call — callers' shape doesn't change.
 
 **Stage 3 — Long-form drop sequence.** Replace the 2.57s lifecycle with a
 10–15s multi-phase sequence using *only existing effects*. Proves the
@@ -369,9 +409,32 @@ and unmount with zero console errors; a full synthetic-track playthrough
   and was verified by reading the code, not by assuming it. Close these
   out with an actual screenshot/session from the user, or a future session
   where the preview pane composites.
-- **2 (parity):** side-by-side capture at identical track offsets pre/post
-  refactor; events fire at the same times with the same intensities. Any
-  visual difference is a bug.
+- **2 (parity) — DONE (2026-08-27), what was actually verified:**
+  `npx tsc -b` and `npm run build` clean. All 9 worlds cycled through the
+  switcher (mount + unmount for each, exercising both `WorldScene.tsx`'s
+  and `FloatingIslandsScene.tsx`'s `MusicEventDirector` mount point) with
+  zero console errors. The `resetToken` → `WorldDirector.reset()` path was
+  exercised twice live with zero errors: once via a scrub-seek mid-track,
+  once via the restart button. `WorldDirector.step()` ran error-free
+  during several real seconds of active playback in each synthetic-track
+  test. `musicEventDirector.ts` itself has zero diff (`git diff` confirms),
+  so its behavior is untouched by construction, not just by observation.
+  **Not verified live — same tooling limitation as Stage 0/1:** a true
+  side-by-side visual capture at identical track offsets pre/post refactor
+  (the pane still would not composite frames this session — `document.hidden`
+  was `true` throughout), and a full natural-end playthrough with a live
+  timer readout (the displayed transport time froze under what looks like
+  Chrome's background-tab timer/audio throttling on a tab that's never
+  actually visible to a compositor — a `tickTime()`/`AudioContext` timing
+  artifact, not a code error; zero console errors appeared in any of these
+  sessions, and the underlying `AudioEngine`/`audioStore` code is
+  unmodified by Stage 2). Since the actual Stage 2 diff is two one-line
+  call-site swaps to functions that are themselves untouched, the risk
+  surface for an undetected visual regression here is about as low as a
+  refactor can have — but it is still recorded as outstanding rather than
+  assumed passing. Close out with a real screenshot/session from the user,
+  or a future session where the preview pane composites and the tab stays
+  genuinely foregrounded.
 - **3 (drop sequence):** a drop must read as a *sustained* multi-second
   event, not a flash. Verify the mute test — the drop's shape should be
   legible with sound off.
