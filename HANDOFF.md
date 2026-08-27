@@ -16,10 +16,13 @@ direction, matching a reference concept-art sheet (`public/reference.png`).
 `@react-three/fiber` + `@react-three/drei` · `@react-three/postprocessing`
 · `zustand` · Web Audio API.
 
-**Status:** feature-complete and visually signed off by the user. All work
-is committed and pushed to `main`. The next phase (world events, long-form
-drop sequences, a higher-level director) is **planned but not started** —
-see `PLAN.md`.
+**Status:** feature-complete and visually signed off by the user. The next
+phase — **Phase 6: Spectacle, Events & the World Director** — is under way;
+see `PLAN.md`. Stages 0-3 are done (dynamic instance-matrix plumbing, a
+`WorldDirector` facade, and a real 10-15s multi-phase major-event sequence
+replacing the old ~2.57s flash). Stage 4 onward (moving cinematic shots,
+world-event archetypes, anything visual/new-geometry) has **not** started
+and needs approval before work resumes.
 
 ---
 
@@ -67,10 +70,14 @@ AudioEngine (Web Audio)
                                   │
    ┌──────────────────────────────┼───────────────────────────────┐
    │                              │                               │
-rhythmState              musicEventDirector              musicController
-(drumPresence,           (rare major events:              (travel speed,
- energyTrend)             phase lifecycle,                 section
-                          envelope, origin)                multipliers)
+rhythmState              WorldDirector (facade)          musicController
+(drumPresence,          step()/reset() -> wraps           (travel speed,
+ energyTrend)            musicEventDirector (a rare        section
+                         ~13s major-event SEQUENCE:         multipliers;
+                         buildup->tension->drop->           reads
+                         transform->reveal->aftermath)      WorldDirector
+                         sequence/phaseDurations getters     .sequence for
+                                  │                          its own dip)
    │                              │                               │
    └──────────────┬───────────────┴───────────────┬───────────────┘
                   │                               │
@@ -80,6 +87,14 @@ rhythmState              musicEventDirector              musicController
                   │
         World render components (per world)
 ```
+
+`WorldDirector` (Phase 6 Stages 2-3) is the sole entry point for
+*advancing*/*resetting* the major-event sequence, and the sole place
+`CameraRig`/`musicController` read its raw phase/timing from. Everything
+else that only needs the smoothed 0..1 envelope
+(`getMajorEventEnvelope()`) still imports it directly from
+`musicEventDirector.ts` — deliberately not rerouted; see that file's and
+`worldDirector.ts`'s doc comments.
 
 **The golden rule:** per-frame data never goes through React state. It
 lives in mutable module-level singletons that components read inside
@@ -125,7 +140,8 @@ The folder name is a leftover misnomer. It contains no world any more:
 | `MusicEventDirector.tsx` / `RhythmState.tsx` | Thin non-rendering `useFrame` mounts that step their singletons. |
 | `world/routeGenerator.ts` | Closed-loop Catmull-Rom route + per-region corridor radius. Generic over region name. |
 | `world/musicController.ts` | Speed model + `speedPerceptionFrac` (shared "how fast does this feel"). |
-| `world/musicEventDirector.ts` | Rare major events: phase lifecycle, intensity, origin, envelope. |
+| `world/worldDirector.ts` | The `WorldDirector` facade — `step()`/`reset()` advance/clear the major-event sequence; `sequence`/`phaseDurations` getters expose its raw phase/timing to the two consumers that need it. |
+| `world/musicEventDirector.ts` | Rare major events: a real 6-phase (buildup/tension/drop/transform/reveal/aftermath), ≈13s sequence — intensity, origin, exactly-once `impactEventId`, continuous envelope. Driven only via `worldDirector.ts`. |
 | `world/rhythmState.ts` | `drumPresence`, `energyTrend`. |
 | `world/cinematicDirector.ts` | Shot types, selection priority, blend envelope, shot transforms. |
 | `world/{camera,character}MotionState.ts`, `groundImpactState.ts` | Cross-system singletons. |
@@ -231,7 +247,11 @@ attempts failed because they used smooth realistic shading.
 - The audio-context clock as sole time source.
 - `FeatureExtractor` detection logic and beat thresholds.
 - `beatConsumer`'s exactly-once behaviour.
-- `musicEventDirector`'s lifecycle and gating.
+- `musicEventDirector`'s TRIGGER conditions and gating (the three trigger
+  sources, thresholds, `MIN_EVENT_GAP`) — unchanged since before Phase 6.
+  The sequence's phase *durations*/*count* were deliberately grown in
+  Phase 6 Stage 3 (see `PLAN.md`) and may be tuned further with
+  instruction, but the WHEN-does-a-sequence-start logic is protected.
 - First/third-person camera architecture.
 - Phase 5's speed tuning (`MIN_SPEED 10`, `MAX_SPEED 34`,
   `MAX_SPEED_CAP 95`) — calibrated against the measured route length
@@ -264,9 +284,13 @@ attempts failed because they used smooth realistic shading.
 ## 10. Git state
 
 - Branch `main`, synced with `github.com/sarna-aarya123/music-visualizer`.
-- `587bf70` — next-phase plan + reference artwork
-- `86f5d70` — the nine cel-shaded worlds (the big rebuild)
-- Working tree clean.
+- Recent history (newest first): Phase 6 Stage 3 (long-form sequences),
+  Stage 2 (parity director refactor), Stage 1 (instance-matrix plumbing),
+  the `HANDOFF.md`/`PLAN.md` rewrite, the next-phase plan, the nine
+  cel-shaded worlds (the big rebuild). Run `git log --oneline` for exact
+  hashes rather than hand-tracking them here.
+- Check `git status` for whether the working tree is clean and whether
+  local commits are ahead of `origin/main` — pushes are not automatic.
 
 `public/reference.png` is the concept sheet all nine worlds were designed
 against. No code reads it any more (the art-backdrop approach was replaced
@@ -276,14 +300,22 @@ by real 3D worlds), but it's kept as the visual source of truth.
 
 ## 11. What's next
 
-See **`PLAN.md`** — a completed read-only investigation and proposed plan
-for world events, long-form drop sequences, advanced camera direction, and
-a higher-level World Director.
+See **`PLAN.md`** for the full stage-by-stage plan and history. Current
+state (2026-08-27): Stages 0-3 done and committed —
 
-**It has not been approved yet.** The user wanted to review it before any
-implementation starts. Two open questions for them:
-1. Which stages to start with.
-2. Whether Stage A (offline audio pre-analysis, which would enable genuine
-   buildup/anticipation rather than post-hoc reaction) is in scope.
+- **Stage 0:** investigation (perf/architecture for animatable instances).
+- **Stage 1:** `OutlinedInstances`/`PropGroup` gained opt-in per-frame
+  instance animation (`animated?: AnimatedInstances`) — plumbing only, no
+  world uses it yet.
+- **Stage 2:** the `WorldDirector` facade (`step()`/`reset()`), wrapping
+  `musicEventDirector.ts` by pure delegation — a parity-only refactor.
+- **Stage 3:** the major-event lifecycle became a real ≈13s multi-phase
+  sequence (buildup → tension → drop → transform → reveal → aftermath),
+  built entirely from existing effects (camera FOV/altitude, existing
+  landmark cinematic shots, world prop emissive/rim, post-processing) —
+  see `PLAN.md` §7 for exact timing and what changed.
 
-**Do not start coding the next phase without their go-ahead.**
+**Stage 4 (moving cinematic shots) has NOT been approved or started.**
+Neither has anything beyond it (event archetypes, background/distant
+events, character abilities, Stage A pre-analysis). **Do not start coding
+further stages without explicit go-ahead.**
