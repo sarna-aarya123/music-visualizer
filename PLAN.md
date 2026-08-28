@@ -1,21 +1,25 @@
 # PLAN — Next Phase: Spectacle, Events & the World Director
 
-> **Status (2026-08-27): Stage 0 (investigation) and Stage 1 (dynamic
-> instance-matrix plumbing) are complete and implemented. Stage 2 onward
-> (WorldDirector, event archetypes, moving props, anything visual) has
-> **not** started and needs approval before work resumes — see §7.
+> **Status (2026-08-28): Stages 0-5 are complete, verified, and committed**
+> — dynamic instance-matrix plumbing, the `WorldDirector` facade, the
+> ~13s multi-phase major-event sequence, moving cinematic camera shots,
+> and per-world signature events (existing geometry rising/spinning/
+> blooming/scatter-reforming during a sequence). **Stage 6 is next, has
+> been redefined by the user, and is NOT yet started — see §10 for the
+> full brief and a code-verified root-cause diagnosis of the camera's
+> current environment-over-character bias.** Read §10 before touching any
+> camera code for Stage 6.
 >
 > **Read `HANDOFF.md` first** for current architecture, conventions,
 > protected systems and known pitfalls.
 >
-> **Two questions still open for the user:** (1) which stage to do next
-> (2 is the natural next step — a parity-only director refactor — but
-> nothing has been assumed), and (2) whether Stage A (offline audio
-> pre-analysis) is in scope.
+> **Stage A (offline audio pre-analysis) remains out of scope** unless the
+> user explicitly asks for it — not needed for Stage 6.
 
-Originally a read-only investigation prepared for review; Stages 0 and 1
-have since been executed exactly as scoped and approved. See §7 for what
-actually shipped in Stage 1 and §8 for how it was verified.
+Originally a read-only investigation prepared for review; Stages 0-5 have
+since been executed exactly as scoped and approved, one at a time, each
+reviewed before the next began. See §7 for what actually shipped in each
+stage and §8 for how each was verified. §10 is the Stage 6 handoff.
 
 > **Correction on scope:** there are **9 worlds**, not 11. The two
 > pre-cel-shading environments ("Cyberpunk City (original)" and "Fantasy
@@ -641,12 +645,20 @@ cost well under 0.5ms. Measured live: **60fps sustained both at rest and
 during an active event** (browser `requestAnimationFrame` sampling, see
 §8) — no measurable frame-time regression from this stage.
 
-**Stage 6 — Background/distant event layer.**
+**Stage 6 — REDEFINED (2026-08-28) by the user, NOT YET STARTED. Cinematic
+character focus + spectacle refinement.** The originally-planned "Stage 6 —
+background/distant event layer" is deferred (now folded into the Stage 8/9
+polish work below, not dropped) — the user identified a higher-priority
+problem after watching Stage 4/5's actual output: **the cinematic camera
+loses the character.** See §10 below for the full brief, findings, and
+exactly what the next session should do. This is the next stage to
+implement, pending the user's return.
 
 **Stage 7 — Character abilities** (launch / glide / landing shockwave),
 triggered by the director.
 
-**Stage 8 — Variety, history, weighted selection, replayability.**
+**Stage 8 — Variety, history, weighted selection, replayability**, plus
+the original Stage 6 background/distant event layer (deferred here).
 
 **Stage 9 — Cross-world polish and performance pass.**
 
@@ -906,3 +918,173 @@ and unmount with zero console errors; a full synthetic-track playthrough
 8. **Sequence/lifecycle collisions.** With longer sequences, a second
    trigger can arrive mid-sequence. Define the policy up front:
    ignore, queue, or interrupt — per archetype.
+
+---
+
+## 10. Stage 6 — Cinematic character focus (next session, NOT STARTED)
+
+**Read this whole section before touching any camera code.** It's the
+complete brief plus a concrete, code-verified diagnosis — not just the
+user's description of the symptom.
+
+### The problem, in the user's words (2026-08-28)
+
+> During major sequences, the camera often focuses heavily on the
+> environment/landmark. It will sometimes stay focused on the environment
+> for a long cinematic shot, briefly cut toward the character, show the
+> character for only a second, then move right back to focusing on the
+> environment. That is NOT what I want. The character is the main thing
+> the viewer is following. **Music → Character → Camera → Environment**,
+> not just **Music → Environment**.
+
+### Root cause — actually found in code, not guessed
+
+**`cameraShots.ts` (Stage 4) is the primary cause.** All three shot
+primitives — `push`, `orbit`, `sweep` — set `outLook.copy(target)`
+(confirmed by re-reading the file this session: lines ~143/150/161).
+`target` is `lockedTarget`, the nearest landmark to the character *at the
+instant the sequence started* (locked once, see `getSequenceCameraShot`).
+**`characterPos` is read exactly once** — to pick that initial landmark —
+**and never touched again by any shot math.** Every frame of buildup,
+tension, most of transform, reveal, and aftermath (i.e. the majority of
+the ~13s sequence — the ~3s `cinematicDirector` cut around the drop is the
+only exception) is a camera that both POSITIONS itself relative to and
+LOOKS AT a static landmark point, full stop. The character is never the
+subject of any Stage 4 shot.
+
+**A second, compounding mechanism:** because `lockedTarget` is a single
+static world-space point and the character keeps running forward along
+the route for the whole sequence, the character physically moves away
+from that locked point as the sequence progresses — even in the first
+frame, when the shot might have incidentally framed the character near
+the landmark, continued running drifts them out of frame with nothing
+tracking them.
+
+**`cinematicDirector.ts` (pre-Stage-4) is comparatively fine and is
+*not* the main problem.** Of its 7 shot types, 6 already look at
+`characterPos` (`wideEstablishing`, `dramaticClose`, `sideTracking`,
+`lowAngle`, `overhead`, `frontFacing`) — only `'landmark'` looks at
+`target`. It's picked often (whenever a landmark is near, which is
+frequent), and when it IS picked it's genuinely landmark-only — but the
+majority of its own shot vocabulary is already character-focused. **Don't
+assume this file needs a rewrite; it likely just needs its selection
+weighting nudged (favor `dramaticClose`/`frontFacing` over `landmark`
+during a Stage 6 sequence) rather than its shot math changed.**
+
+**Net effect matching the user's exact complaint:** the brief
+`cinematicDirector` cut (drop, ~3s) sometimes shows the character
+(`dramaticClose`/`frontFacing`) or sometimes doesn't (`landmark`) — that's
+the "briefly cut toward the character for one second" — and then Stage
+4's shot system, which is live for the rest of the ~13s and structurally
+cannot look at the character at all, is the "right back to the
+environment."
+
+### What NOT to do
+
+- Don't add random extra character cuts on top of the existing shots —
+  the brief explicitly warns this makes it worse (more disconnected
+  cutting, still no coherent "camera is with the character" feel).
+- Don't build a second camera system. `CameraRig`/`cameraShots.ts`/
+  `cinematicDirector.ts` are the right places to extend.
+- Don't drop landmark/environment shots entirely — Stage 5's whole
+  purpose (world events) needs a camera that can still show them off,
+  especially for `reveal`. The fix is *default-to-character, environment
+  only when it earns it* — not remove environment framing.
+
+### The likely smallest clean fix (a starting hypothesis, not a mandate)
+
+`cameraShots.ts`'s `evaluateShot`/`ShotSpec` almost certainly need a
+notion of *what the shot is actually looking at* that isn't hardcoded to
+`target`. The cheapest change that matches the user's per-phase
+philosophy (§ below) without a rewrite: give each `ShotSpec` a
+`lookWeight` (0 = character, 1 = landmark, blend between) and have
+`evaluateShot` lerp `outLook` between `characterPos` (now threaded
+through, not discarded) and `target` by that weight — `push`/`orbit`/
+`sweep`'s POSITION math can stay landmark-anchored (that's what gives the
+"orbiting/sweeping past something" feel), but the look-at is what actually
+controls whether the character reads as the subject. Per-phase defaults
+matching the user's brief:
+
+- `buildup`: lookWeight low (mostly character, environment revealing
+  behind/around them)
+- `tension`: lookWeight low — "orbit around character while environment
+  changes in background" (may need `orbit`'s pivot to blend toward
+  `characterPos` too, not just its look-at, to actually orbit the
+  character rather than the landmark)
+- `drop`: character-centered; this is also where `cinematicDirector`'s
+  cut usually dominates — consider biasing its selection away from pure
+  `'landmark'` here
+- `transform`: low-to-mid — "follow/fly around the character while
+  environment changes around them"
+- `reveal`: THIS is where landmark-heavy (`lookWeight` high) is
+  appropriate — the brief explicitly says so — but even here, prefer
+  compositions that keep the character as foreground/silhouette/scale
+  reference over a pure environment-only shot when reasonably achievable
+- `aftermath`: back to low — "return attention toward the character"
+
+**This is a hypothesis for the next session to validate, not a spec to
+implement blindly** — the brief explicitly asks to "inspect what Stage 5
+actually produced and determine the smallest clean change," and the
+character-position-tracking gap above may turn out to need more than a
+look-at blend (e.g. periodically re-anchoring `lockedTarget`-relative math
+to the character's *current* position rather than a single static lock)
+once it's actually watched in motion.
+
+### Full user brief for Stage 6 (verbatim scope, preserved for the next session)
+
+**Goal:** cinematic system should feel like a music video / anime game
+sequence — character remains the visual anchor throughout, environment
+complements rather than replaces them as the subject. Environment-only
+shots should be intentional and relatively rare (reveal is the main
+legitimate case), not the default.
+
+**Good compositions to aim for:** character in foreground with landmark
+behind; character moving across frame; character silhouetted against a
+reveal; over-the-shoulder framing; low-angle character shot; wide shot
+where character is small but readable; orbit around character +
+environment; tracking shot following the character.
+
+**Per-phase intent:**
+- Buildup: follow character while gradually revealing environment; can
+  pull back to show something approaching/activating around them.
+- Tension: character stays visible; orbit around character while
+  environment changes in background; framing should feel like
+  anticipation.
+- Drop: strong character-centered movement; environment can react/explode
+  behind them; a wide shot showing both is fine; don't abandon the
+  character for a landmark-only shot.
+- Transform: follow/orbit the character while environmental changes
+  happen around them; character's own movement should give the camera a
+  reason to move.
+- Reveal: environment-focused shots are appropriate here, but keep the
+  character as foreground/silhouette/scale reference whenever reasonably
+  achievable.
+- Aftermath: return attention to the character; let them keep moving
+  through the transformed world.
+
+**Preserve, do not throw away:** Stage 1 instance plumbing, Stage 3
+long-form sequences, Stage 4 moving shots (the primitives are good — it's
+specifically their look-at target that's wrong), Stage 5 world
+events/signature events, Phase 5 speed tuning, character locomotion,
+rhythm/energy reactions, the existing `cinematicDirector` lifecycle
+(extend its selection weighting, don't rewrite its shot math).
+
+**Protected, do not modify unless absolutely necessary:**
+`FeatureExtractor`, beat-detection thresholds, `beatConsumer`, the
+audio-context clock, route generation, collision/clearance math, Phase 5
+speed tuning, hi-hat/snare camera exclusion. Hi-hats/snares must never
+gain any camera influence as part of this stage.
+
+**Verification must be genuinely visual** (watch complete sequences, not
+just build/typecheck) and specifically check: character visible
+substantially more often; camera feels like it's following the character;
+environment-only shots feel rare/earned, not excessive; character+
+environment compositions look intentional; character stays readable
+during drops; large landmarks still get shown off; transitions stay
+smooth; the whole sequence reads as one continuous cinematic; normal
+gameplay camera and first-person mode both unaffected.
+
+**Git:** same discipline as every prior stage — full diff review, protected-
+system check, remove any temp/debug code, commit ALL intended changes,
+`git status` clean, report commit hash + ahead-of-origin count, do not push
+unless explicitly asked, stop after Stage 6 for review before Stage 7.

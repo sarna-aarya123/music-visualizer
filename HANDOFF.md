@@ -361,7 +361,25 @@ state (2026-08-28): Stages 0-5 done and committed —
   functions already being visually confirmed elsewhere, not their own
   screenshots).
 
-**Stage 6 (background/distant event layer) has NOT been approved or
-started.** Neither has anything beyond it (character abilities, Stage A
-pre-analysis). **Do not start coding further stages without explicit
-go-ahead.**
+**Stage 6 has been approved and is next, but is NOT yet started — and has
+been redefined by the user.** It is no longer "background/distant event
+layer" (that's deferred, folded into Stage 8/9 — see `PLAN.md` §7). It is
+now: **fix the cinematic camera's environment-over-character bias.**
+
+**Read `PLAN.md` §10 before writing any Stage 6 code.** Short version: the
+user watched Stage 4/5's actual output and found the camera spends most of
+a major sequence looking at a landmark, cutting to the character for only
+a second via the pre-existing `cinematicDirector` shots, then straight
+back to the environment. §10 has the exact root cause already found in
+code (not guessed) — `cameraShots.ts`'s three shot primitives
+(`push`/`orbit`/`sweep`) all set their look-at to the locked landmark
+target and never reference the character's position after locking it —
+plus the user's full per-phase philosophy for the fix (character as
+default cinematic anchor, environment-focus reserved mainly for
+`reveal`), what to preserve, and verification requirements. Do not
+re-derive this from scratch — §10 already did the investigation.
+
+Nothing beyond Stage 6 (character abilities, Stage A pre-analysis,
+world-specific event archetypes for the other stages) is started or
+approved. **Do not start coding further stages without explicit
+go-ahead**, and stop after Stage 6 for review before Stage 7.
