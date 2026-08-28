@@ -4,8 +4,36 @@ import { useFrame } from '@react-three/fiber';
 import type { AudioFeatureFrame } from '../../audio/types';
 import { getMajorEventEnvelope } from '../cyberpunkCity/world/musicEventDirector';
 import { rhythmState } from '../cyberpunkCity/world/rhythmState';
+import { WorldDirector } from '../cyberpunkCity/world/worldDirector';
+import { riseLike, type EventBinding } from '../cyberpunkCity/world/worldEvents';
+import type { MajorEventPhase } from '../cyberpunkCity/world/musicEventDirector';
 import type { FloatingIslandsWorld } from './world/worldGenerator';
 import { ToonSurfaceMaterial, ToonOutlineMaterial } from './ToonMaterial';
+
+/**
+ * Phase 6 Stage 5 signature event: the pagodas — this world's most
+ * recognisable structure — rise up out of the islands during a major
+ * sequence. Reuses `worldEvents.ts`'s `riseLike` directly (same math as
+ * every other world's signature events) rather than routing through
+ * `createSignatureEventAnimated`/`OutlinedInstances`, because this file
+ * already hand-rolls its own instanced-mesh updates (see the file-level
+ * comment above and `PLAN.md`/`HANDOFF.md`'s note on why Floating Islands
+ * was left off the shared `OutlinedInstances` path). Body and roof tiers
+ * get the identical lift on every phase — a roof rising without its body
+ * (or vice versa) would visibly separate the two.
+ */
+const PAGODA_RISE_BINDINGS: EventBinding[] = [
+  { phase: 'buildup', archetype: 'RISE', params: { liftFrom: -10, liftTo: -4 } },
+  { phase: 'tension', archetype: 'RISE', params: { liftFrom: -4, liftTo: 0 } },
+  { phase: 'drop', archetype: 'RISE', params: { liftFrom: 0, liftTo: 8 } },
+  { phase: 'transform', archetype: 'RISE', params: { liftFrom: 8, liftTo: 11 } },
+  { phase: 'reveal', archetype: 'RISE', params: { liftFrom: 11, liftTo: 11 } },
+  { phase: 'aftermath', archetype: 'RISE', params: { liftFrom: 11, liftTo: 0 } },
+];
+
+function pagodaRiseBindingFor(phase: MajorEventPhase): EventBinding | undefined {
+  return PAGODA_RISE_BINDINGS.find((b) => b.phase === phase);
+}
 
 /**
  * The islands themselves plus everything standing on them. All instanced
@@ -50,6 +78,21 @@ export function Islands({
   const roofOutRef = useRef<THREE.InstancedMesh>(null!);
   const bodyOutRef = useRef<THREE.InstancedMesh>(null!);
   const toriiOutRef = useRef<THREE.InstancedMesh>(null!);
+  // Base (rest-state) transforms for the pagoda rise event — captured
+  // once in the build effect below, read every frame by the event
+  // useFrame, never mutated. A plain array ref (not React state): exactly
+  // this project's "per-frame data never goes through React state" rule.
+  const bodyBaseMatrices = useRef<THREE.Matrix4[]>([]);
+  const roofBaseMatrices = useRef<THREE.Matrix4[]>([]);
+  const eventScratch = useRef(new THREE.Matrix4()).current;
+  // Edge-triggered: true only while the pagoda-rise event actually wrote
+  // non-base matrices last frame. Lets the idle case skip all per-frame
+  // work (matching Stage 1's zero-cost-when-inactive rule) while still
+  // guaranteeing exactly one "restore to base" pass the instant the event
+  // stops for ANY reason — phase reaching aftermath's end, or a seek/
+  // reset snapping straight to 'idle' mid-event. Without this, a seek
+  // mid-event would leave the pagodas permanently stuck risen.
+  const pagodaEventWasActive = useRef(false);
 
   const nearIslands = useMemo(() => world.islands.filter((i) => i.isNear), [world]);
 
@@ -157,6 +200,8 @@ export function Islands({
     // Pagodas: stacked shrinking tiers, each a lit body box under a wide
     // flared roof — the reference's most recognisable structure.
     let tierIdx = 0;
+    bodyBaseMatrices.current = [];
+    roofBaseMatrices.current = [];
     world.pagodas.forEach((p) => {
       let y = p.y;
       for (let tier = 0; tier < p.tiers; tier++) {
@@ -169,6 +214,7 @@ export function Islands({
         d.scale.set(bodyW, bodyH, bodyW);
         d.updateMatrix();
         bodyRef.current.setMatrixAt(tierIdx, d.matrix);
+        bodyBaseMatrices.current.push(d.matrix.clone());
 
         const roofR = bodyW * 1.15;
         const roofH = 1.5 * p.scale * shrink;
@@ -177,6 +223,7 @@ export function Islands({
         d.scale.set(roofR, roofH, roofR);
         d.updateMatrix();
         roofRef.current.setMatrixAt(tierIdx, d.matrix);
+        roofBaseMatrices.current.push(d.matrix.clone());
 
         y += bodyH + roofH * 0.62;
         tierIdx++;
@@ -245,6 +292,49 @@ export function Islands({
     for (const m of Object.values(materials)) {
       (m.uniforms.uCameraPos.value as THREE.Vector3).copy(cam);
       m.uniforms.uRimStrength.value = (m.userData.baseRim as number) * (1 + env * 1.1);
+    }
+
+    // Signature event: pagodas rise during a major sequence — see
+    // PAGODA_RISE_BINDINGS above. Zero extra work whenever no sequence is
+    // active or the current phase has no binding (the common case): reads
+    // `WorldDirector.sequence.phase` once, does nothing else.
+    const seq = WorldDirector.sequence;
+    const binding = seq.phase === 'idle' ? undefined : pagodaRiseBindingFor(seq.phase);
+    let touchedThisFrame = false;
+    if (binding && bodyRef.current && roofRef.current) {
+      const duration = WorldDirector.phaseDurations[seq.phase as Exclude<MajorEventPhase, 'idle'>];
+      const progress = duration > 0 ? THREE.MathUtils.clamp(seq.phaseTime / duration, 0, 1) : 1;
+      for (let i = 0; i < bodyBaseMatrices.current.length; i++) {
+        riseLike(bodyBaseMatrices.current[i], progress, seq.phaseTime, binding.params, eventScratch);
+        bodyRef.current.setMatrixAt(i, eventScratch);
+      }
+      for (let i = 0; i < roofBaseMatrices.current.length; i++) {
+        riseLike(roofBaseMatrices.current[i], progress, seq.phaseTime, binding.params, eventScratch);
+        roofRef.current.setMatrixAt(i, eventScratch);
+      }
+      pagodaEventWasActive.current = true;
+      touchedThisFrame = true;
+    } else if (pagodaEventWasActive.current && bodyRef.current && roofRef.current) {
+      // The event just stopped (phase ran out its own bindings, OR a
+      // seek/reset snapped straight to 'idle' mid-event) — restore every
+      // tier to its exact base transform in one pass, then go quiet again
+      // until the next event. Guarantees no permanently-corrupted state.
+      for (let i = 0; i < bodyBaseMatrices.current.length; i++) bodyRef.current.setMatrixAt(i, bodyBaseMatrices.current[i]);
+      for (let i = 0; i < roofBaseMatrices.current.length; i++) roofRef.current.setMatrixAt(i, roofBaseMatrices.current[i]);
+      pagodaEventWasActive.current = false;
+      touchedThisFrame = true;
+    }
+    if (touchedThisFrame) {
+      bodyRef.current.instanceMatrix.needsUpdate = true;
+      roofRef.current.instanceMatrix.needsUpdate = true;
+      if (bodyOutRef.current) {
+        bodyOutRef.current.instanceMatrix.copyArray(bodyRef.current.instanceMatrix.array);
+        bodyOutRef.current.instanceMatrix.needsUpdate = true;
+      }
+      if (roofOutRef.current) {
+        roofOutRef.current.instanceMatrix.copyArray(roofRef.current.instanceMatrix.array);
+        roofOutRef.current.instanceMatrix.needsUpdate = true;
+      }
     }
   });
 

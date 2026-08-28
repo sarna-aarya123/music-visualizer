@@ -18,12 +18,15 @@ direction, matching a reference concept-art sheet (`public/reference.png`).
 
 **Status:** feature-complete and visually signed off by the user. The next
 phase — **Phase 6: Spectacle, Events & the World Director** — is under way;
-see `PLAN.md`. Stages 0-4 are done (dynamic instance-matrix plumbing, a
+see `PLAN.md`. Stages 0-5 are done (dynamic instance-matrix plumbing, a
 `WorldDirector` facade, a real 10-15s multi-phase major-event sequence
-replacing the old ~2.57s flash, and moving camera shots — dolly/orbit/
-sweep — for that sequence). Stage 5 onward (world-event archetypes,
-per-world signature events, anything with new geometry) has **not**
-started and needs approval before work resumes.
+replacing the old ~2.57s flash, moving camera shots for that sequence, and
+now every one of the 9 worlds has its own signature event — buildings/
+pyramids/whales/rings/streetlights/mushrooms/wheels/pagodas actually
+moving during a major sequence, built from each world's own existing
+geometry). Stage 6 onward (background/distant events, character
+abilities, anything requiring genuinely new geometry) has **not** started
+and needs approval before work resumes.
 
 ---
 
@@ -153,6 +156,7 @@ The folder name is a leftover misnomer. It contains no world any more:
 | `world/worldDirector.ts` | The `WorldDirector` facade — `step()`/`reset()` advance/clear the major-event sequence; `sequence`/`phaseDurations` getters expose its raw phase/timing; `getSequenceCameraShot(...)` is the camera-shot decision (Stage 4), delegated to `cameraShots.ts`. |
 | `world/musicEventDirector.ts` | Rare major events: a real 6-phase (buildup/tension/drop/transform/reveal/aftermath), ≈13s sequence — intensity, origin, exactly-once `impactEventId`, continuous envelope. Driven only via `worldDirector.ts`. |
 | `world/cameraShots.ts` | Stage 4: three pure, zero-allocation camera-path primitives (`push`/`orbit`/`sweep`) + the phase→shot table for the major-event sequence, plus the per-sequence locked-target logic. No rendering — `CameraRig` applies what this computes. |
+| `world/worldEvents.ts` | Stage 5: the "world event executor" — four pure, zero-allocation per-instance transform functions (`riseLike`/`spinUp`/`scatterReform`, ten archetype names mapped onto them) plus `createSignatureEventAnimated(...)`, which each world's `build()` calls to turn a `PropGroup` into one whose flagged instances play out that world's own `EventBinding[]` data across the sequence's phases. No rendering — only `OutlinedInstances` (via the returned `AnimatedInstances`) and `floatingIslands/Islands.tsx`'s own hand-rolled update ever call `setMatrixAt`. |
 | `world/rhythmState.ts` | `drumPresence`, `energyTrend`. |
 | `world/cinematicDirector.ts` | Shot types, selection priority, blend envelope, shot transforms. |
 | `world/{camera,character}MotionState.ts`, `groundImpactState.ts` | Cross-system singletons. |
@@ -197,13 +201,26 @@ A `WorldDefinition` is: `sky`, `fog`, `ambient`, `path` (half-width,
 colours, style 0 planks / 1 smooth / 2 neon grid, optional railings),
 `particles` (0 falling / 1 rising / 2 drifting), `outline`, and `build()`.
 
-A `PropGroup` is `{ key, geometry, toon, matrices, reactive? }` where
-`reactive: { mood, drums, event }` drives emissive from the music.
+A `PropGroup` is `{ key, geometry, toon, matrices, reactive?, animated? }`
+where `reactive: { mood, drums, event }` drives emissive from the music,
+and `animated` (Stage 5) is `createSignatureEventAnimated(matrices,
+indices, bindings)` from `worldEvents.ts` for a group that plays out a
+signature event — see that section of `PLAN.md` for what each of the 9
+worlds animates and why.
 
 **Clearance rule:** props must be placed at
 `corridorRadius + ownRadius + margin`. The `flank()` helper takes
 `ownRadius` for exactly this — omitting it caused large scenery to cut
-through the walkway.
+through the walkway. Signature events never violate this: every one is
+pure vertical lift/scale/rotation around a prop's own already-placed
+position, never a lateral move toward the corridor.
+
+**Structural coherence rule (Stage 5):** if a prop group is rigidly
+attached to another (window bands mounted on a tower, a ferris wheel's
+support spokes, rim lights on its wheel), an event binding on the parent
+group needs the *identical* binding applied to the attached group too, or
+the attachment visibly detaches when the parent moves. Bitten once this
+stage — see `PLAN.md`'s Stage 5 write-up.
 
 ---
 
@@ -295,10 +312,11 @@ attempts failed because they used smooth realistic shading.
 ## 10. Git state
 
 - Branch `main`, synced with `github.com/sarna-aarya123/music-visualizer`.
-- Recent history (newest first): Phase 6 Stage 4 (moving camera shots),
-  Stage 3 (long-form sequences), Stage 2 (parity director refactor),
-  Stage 1 (instance-matrix plumbing), the `HANDOFF.md`/`PLAN.md` rewrite,
-  the next-phase plan, the nine cel-shaded worlds (the big rebuild). Run
+- Recent history (newest first): Phase 6 Stage 5 (world event
+  archetypes + signature events), Stage 4 (moving camera shots), Stage 3
+  (long-form sequences), Stage 2 (parity director refactor), Stage 1
+  (instance-matrix plumbing), the `HANDOFF.md`/`PLAN.md` rewrite, the
+  next-phase plan, the nine cel-shaded worlds (the big rebuild). Run
   `git log --oneline` for exact hashes rather than hand-tracking them here.
 - Check `git status` for whether the working tree is clean and whether
   local commits are ahead of `origin/main` — pushes are not automatic.
@@ -312,7 +330,7 @@ by real 3D worlds), but it's kept as the visual source of truth.
 ## 11. What's next
 
 See **`PLAN.md`** for the full stage-by-stage plan and history. Current
-state (2026-08-28): Stages 0-4 done and committed —
+state (2026-08-28): Stages 0-5 done and committed —
 
 - **Stage 0:** investigation (perf/architecture for animatable instances).
 - **Stage 1:** `OutlinedInstances`/`PropGroup` gained opt-in per-frame
@@ -331,8 +349,19 @@ state (2026-08-28): Stages 0-4 done and committed —
   yielding priority to) the existing `cinematicDirector` cut so the two
   systems never fight for the camera. See `PLAN.md` §7 for the exact
   phase→shot table and how the priority/cross-fade works.
+- **Stage 5:** every one of the 9 worlds now has its own signature
+  event — existing hero/landmark prop groups (towers, pyramids, whales,
+  rings, streetlights, mushroom caps, ferris wheels, pagodas) actually
+  rise/spin/bloom/scatter-reform during a major sequence, via ten
+  archetype names built on four generic evaluator functions
+  (`world/worldEvents.ts`). No new geometry. See `PLAN.md` §7 for the
+  full per-world table, the structural-coherence rule discovered/fixed
+  this stage, and what remains unverified visually (6 of 9 worlds'
+  events were only confirmed via code review + the shared evaluator
+  functions already being visually confirmed elsewhere, not their own
+  screenshots).
 
-**Stage 5 (world-event archetypes, per-world signature events) has NOT
-been approved or started.** Neither has anything beyond it (background/
-distant events, character abilities, Stage A pre-analysis). **Do not
-start coding further stages without explicit go-ahead.**
+**Stage 6 (background/distant event layer) has NOT been approved or
+started.** Neither has anything beyond it (character abilities, Stage A
+pre-analysis). **Do not start coding further stages without explicit
+go-ahead.**
