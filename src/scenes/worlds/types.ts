@@ -29,7 +29,9 @@ export interface PropGroup {
   /** Opt-in: a subset of this group's instances recomputed every frame
    *  instead of baked once. Omit for the plain static path — see
    *  `OutlinedInstances`'s `AnimatedInstances` doc for the per-frame
-   *  contract. Stage 1 plumbing only; no world populates this yet. */
+   *  contract. Phase 6 Stage 5: worlds populate this via
+   *  `worldEvents.ts`'s `createSignatureEventAnimated` for their
+   *  signature major-event props. */
   animated?: AnimatedInstances;
 }
 

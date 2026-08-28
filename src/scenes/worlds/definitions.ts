@@ -3,6 +3,7 @@ import { createRng } from '../cyberpunkCity/world/seededRandom';
 import type { RouteData } from '../cyberpunkCity/world/routeGenerator';
 import type { BuiltWorld, PropGroup, WorldDefinition } from './types';
 import { G, mat } from './geometry';
+import { createSignatureEventAnimated, type EventBinding } from '../cyberpunkCity/world/worldEvents';
 
 /**
  * The eight art-reference worlds, each expressed as data: a sky, a mood,
@@ -63,6 +64,17 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
   const signs: THREE.Matrix4[] = [];
   const landmarkPositions: THREE.Vector3[] = [];
 
+  // Phase 6 Stage 5 signature event: a handful of the tallest towers (and
+  // their own window bands) surge upward and light up through the
+  // sequence — capped well below the full landmark count (all h>52
+  // towers still count as camera landmarks; only the first
+  // MAX_EVENT_TOWERS also get the animated rise) so the event stays a
+  // focused "these specific skyscrapers are doing something" moment
+  // instead of animating the entire skyline every frame.
+  const MAX_EVENT_TOWERS = 6;
+  const eventTowerIndices: number[] = [];
+  const eventWindowIndices: number[] = [];
+
   const N = 150;
   for (let i = 0; i < N; i++) {
     const t = i / N;
@@ -73,6 +85,9 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
       const p = flank(route, t, s, 1.5 + rng() * 9, h / 2 - 2, w * 0.6);
       const rot = rng() * 0.4 - 0.2;
       towers.push(mat(p, [0, rot, 0], [w, h, w * (0.8 + rng() * 0.5)]));
+      const towerIdx = towers.length - 1;
+      const isEventTower = h > 52 && eventTowerIndices.length < MAX_EVENT_TOWERS;
+      if (isEventTower) eventTowerIndices.push(towerIdx);
 
       // Emissive window bands climbing the facade.
       const bands = 3 + Math.floor(rng() * 5);
@@ -80,6 +95,7 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
         const by = p.y - h / 2 + (h * (b + 0.8)) / (bands + 1);
         const bp = new THREE.Vector3(p.x, by, p.z);
         windows.push(mat(bp, [0, rot, 0], [w * 1.02, 0.5 + rng() * 0.8, w * 0.82]));
+        if (isEventTower) eventWindowIndices.push(windows.length - 1);
       }
       // Vertical neon sign strips on the corridor-facing side.
       if (rng() < 0.5) {
@@ -90,12 +106,40 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
     }
   }
 
+  // Towers: rise through buildup/tension, a big surge at the drop, keep
+  // climbing through transform, hold at full height for reveal, settle
+  // back down through aftermath. Each phase's liftFrom matches the
+  // previous phase's liftTo so the rise reads as one continuous motion.
+  const towerBindings: EventBinding[] = [
+    { phase: 'buildup', archetype: 'RISE', params: { liftFrom: -16, liftTo: -6 } },
+    { phase: 'tension', archetype: 'RISE', params: { liftFrom: -6, liftTo: -1 } },
+    { phase: 'drop', archetype: 'RISE', params: { liftFrom: -1, liftTo: 9 } },
+    { phase: 'transform', archetype: 'RISE', params: { liftFrom: 9, liftTo: 14 } },
+    { phase: 'reveal', archetype: 'RISE', params: { liftFrom: 14, liftTo: 14 } },
+    { phase: 'aftermath', archetype: 'RISE', params: { liftFrom: 14, liftTo: 0 } },
+  ];
+  // Windows: the SAME lift as their own tower on every phase (they're
+  // mounted ON the facade — leaving them at the base height while the
+  // tower rises out from under them would visibly detach them from the
+  // building) PLUS a SWEEP (staggered) activation climbing the facade
+  // during tension and a synced brightness/size pulse at the drop —
+  // "windows cascading on" per the brief.
+  const windowBindings: EventBinding[] = [
+    { phase: 'buildup', archetype: 'RISE', params: { liftFrom: -16, liftTo: -6 } },
+    { phase: 'tension', archetype: 'SWEEP', params: { liftFrom: -6, liftTo: -1, scaleFrom: 0.3, scaleTo: 1.0, stagger: 0.7 } },
+    { phase: 'drop', archetype: 'ACTIVATE', params: { liftFrom: -1, liftTo: 9, scaleFrom: 1.0, scaleTo: 1.35 } },
+    { phase: 'transform', archetype: 'RISE', params: { liftFrom: 9, liftTo: 14 } },
+    { phase: 'reveal', archetype: 'RISE', params: { liftFrom: 14, liftTo: 14 } },
+    { phase: 'aftermath', archetype: 'ACTIVATE', params: { liftFrom: 14, liftTo: 0, scaleFrom: 1.35, scaleTo: 1.0 } },
+  ];
+
   const groups: PropGroup[] = [
     {
       key: 'towers',
       geometry: G.box,
       toon: { color: '#2b2350', shadow: '#120a2e', rim: '#7ef2ff', rimStrength: 0.55 },
       matrices: towers,
+      animated: createSignatureEventAnimated(towers, eventTowerIndices, towerBindings),
     },
     {
       key: 'windows',
@@ -103,6 +147,7 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#ffc46a', shadow: '#8a4a2a', rim: '#fff0c0', rimStrength: 0.3, emissive: 0.5 },
       matrices: windows,
       reactive: { mood: 0.4, drums: 0.3, event: 1.4 },
+      animated: createSignatureEventAnimated(windows, eventWindowIndices, windowBindings),
     },
     {
       key: 'signs',
@@ -205,6 +250,20 @@ function buildDesert(route: RouteData<string>, seed: number): BuiltWorld {
     }
   }
 
+  // Signature event: the floating pyramids surge higher and begin a slow
+  // rotation during reveal — "pyramids rise and rotate" per the brief.
+  // Spin is confined to a single phase (reveal) — see worldEvents.ts's
+  // doc comment on why a spin binding must never span two phases.
+  const pyramidBindings: EventBinding[] = [
+    { phase: 'buildup', archetype: 'RISE', params: { liftFrom: -10, liftTo: -4 } },
+    { phase: 'tension', archetype: 'RISE', params: { liftFrom: -4, liftTo: 2 } },
+    { phase: 'drop', archetype: 'RISE', params: { liftFrom: 2, liftTo: 16 } },
+    { phase: 'transform', archetype: 'RISE', params: { liftFrom: 16, liftTo: 20 } },
+    { phase: 'reveal', archetype: 'RISE', params: { liftFrom: 20, liftTo: 20, spinRate: 0.7 } },
+    { phase: 'aftermath', archetype: 'RISE', params: { liftFrom: 20, liftTo: 0 } },
+  ];
+  const pyramidIndices = pyramids.map((_, i) => i);
+
   const groups: PropGroup[] = [
     {
       key: 'pyramids',
@@ -212,6 +271,7 @@ function buildDesert(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#e0763c', shadow: '#5a1638', rim: '#ffe2ae', rimStrength: 0.75 },
       matrices: pyramids,
       reactive: { mood: 0.18, event: 1.1 },
+      animated: createSignatureEventAnimated(pyramids, pyramidIndices, pyramidBindings),
     },
     {
       key: 'mesas',
@@ -281,6 +341,26 @@ function buildAbyss(route: RouteData<string>, seed: number): BuiltWorld {
     coral.push(mat(p, [0, rng() * Math.PI, 0], [h * 0.5, h, h * 0.5]));
   }
 
+  // Whales surge upward and loom large through the sequence — "whale
+  // pass overhead" per the brief. Coral blooms in a staggered wave
+  // (a subset, for focus/performance) with a synced pulse at the drop.
+  const whaleBindings: EventBinding[] = [
+    { phase: 'buildup', archetype: 'RISE', params: { liftFrom: -6, liftTo: -2 } },
+    { phase: 'tension', archetype: 'RISE', params: { liftFrom: -2, liftTo: 2 } },
+    { phase: 'drop', archetype: 'RISE', params: { liftFrom: 2, liftTo: 10 } },
+    { phase: 'transform', archetype: 'RISE', params: { liftFrom: 10, liftTo: 14 } },
+    { phase: 'reveal', archetype: 'RISE', params: { liftFrom: 14, liftTo: 14 } },
+    { phase: 'aftermath', archetype: 'RISE', params: { liftFrom: 14, liftTo: 0 } },
+  ];
+  const whaleIndices = whales.map((_, i) => i);
+
+  const coralEventIndices = coral.map((_, i) => i).filter((i) => i % 3 === 0);
+  const coralBindings: EventBinding[] = [
+    { phase: 'tension', archetype: 'SWEEP', params: { scaleFrom: 0.4, scaleTo: 1.0, stagger: 0.8 } },
+    { phase: 'drop', archetype: 'BLOOM', params: { scaleFrom: 1.0, scaleTo: 1.3 } },
+    { phase: 'aftermath', archetype: 'BLOOM', params: { scaleFrom: 1.3, scaleTo: 1.0 } },
+  ];
+
   const groups: PropGroup[] = [
     {
       key: 'whales',
@@ -288,6 +368,7 @@ function buildAbyss(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#2f6f9e', shadow: '#0a2340', rim: '#bff0ff', rimStrength: 0.8 },
       matrices: whales,
       reactive: { mood: 0.2, event: 1.2 },
+      animated: createSignatureEventAnimated(whales, whaleIndices, whaleBindings),
     },
     {
       key: 'columns',
@@ -307,6 +388,7 @@ function buildAbyss(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#ff7fb0', shadow: '#2a2a6a', rim: '#ffd0e8', rimStrength: 0.6, emissive: 0.15 },
       matrices: coral,
       reactive: { drums: 0.4, event: 0.9 },
+      animated: createSignatureEventAnimated(coral, coralEventIndices, coralBindings),
     },
   ];
   return { groups, landmarkPositions };
@@ -346,6 +428,19 @@ function buildOuter(route: RouteData<string>, seed: number): BuiltWorld {
     landmarkPositions.push(p.clone());
   }
 
+  // Rings rise into view, then spin up and align during transform —
+  // "rings spin up and align" per the brief. Spin confined to transform
+  // only (see worldEvents.ts's single-phase-spin rule).
+  const ringBindings: EventBinding[] = [
+    { phase: 'buildup', archetype: 'RISE', params: { liftFrom: -8, liftTo: -3 } },
+    { phase: 'tension', archetype: 'RISE', params: { liftFrom: -3, liftTo: 2 } },
+    { phase: 'drop', archetype: 'RISE', params: { liftFrom: 2, liftTo: 12 } },
+    { phase: 'transform', archetype: 'RISE', params: { liftFrom: 12, liftTo: 12, spinRate: 2.2 } },
+    { phase: 'reveal', archetype: 'RISE', params: { liftFrom: 12, liftTo: 12 } },
+    { phase: 'aftermath', archetype: 'RISE', params: { liftFrom: 12, liftTo: 0 } },
+  ];
+  const ringIndices = rings.map((_, i) => i);
+
   const groups: PropGroup[] = [
     {
       key: 'rocks',
@@ -366,6 +461,7 @@ function buildOuter(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#ff6ad5', shadow: '#3a0a52', rim: '#ffd0f4', rimStrength: 0.9, emissive: 0.45 },
       matrices: rings,
       reactive: { drums: 0.6, event: 2.0 },
+      animated: createSignatureEventAnimated(rings, ringIndices, ringBindings),
     },
   ];
   return { groups, landmarkPositions };
@@ -420,6 +516,18 @@ function buildPs2(route: RouteData<string>, seed: number): BuiltWorld {
     lampHeads.push(mat(new THREE.Vector3(p.x, p.y + 2.7, p.z), [0, 0, 0], [0.5, 0.35, 0.5]));
   }
 
+  // Streetlights ACTIVATE in a SWEEP down the road, popping past their
+  // normal size before settling exactly back to it at the drop — "street
+  // lights activate in a sweep down the road" per the brief. No bindings
+  // needed past the drop: its scaleTo of 1.0 already equals the base
+  // transform, so the group is indistinguishable from static once it
+  // ends — nothing to ease back from.
+  const lampHeadBindings: EventBinding[] = [
+    { phase: 'tension', archetype: 'SWEEP', params: { scaleFrom: 0.2, scaleTo: 1.3, stagger: 0.75 } },
+    { phase: 'drop', archetype: 'ACTIVATE', params: { scaleFrom: 1.3, scaleTo: 1.0 } },
+  ];
+  const lampHeadIndices = lampHeads.map((_, i) => i);
+
   const groups: PropGroup[] = [
     { key: 'houses', geometry: G.box, toon: { color: '#5a5f86', shadow: '#191a34', rim: '#cfd8ff', rimStrength: 0.45 }, matrices: houses },
     { key: 'roofs', geometry: G.cone4, toon: { color: '#6d4360', shadow: '#1c1130', rim: '#e0c0ff', rimStrength: 0.4 }, matrices: roofs },
@@ -439,6 +547,7 @@ function buildPs2(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#ffe0a0', shadow: '#a06a30', rim: '#fff6d8', rimStrength: 0.2, emissive: 0.9 },
       matrices: lampHeads,
       reactive: { drums: 0.3, event: 1.2 },
+      animated: createSignatureEventAnimated(lampHeads, lampHeadIndices, lampHeadBindings),
     },
   ];
   return { groups, landmarkPositions };
@@ -468,6 +577,18 @@ function buildForest(route: RouteData<string>, seed: number): BuiltWorld {
     caps.push(mat(cp, [0, rng() * Math.PI, 0], [capR, capR * 0.62, capR]));
     if (h > 17) landmarkPositions.push(cp.clone());
   }
+
+  // Giant mushroom caps bloom open in a SWEEP across the whole group, a
+  // synced pulse right at the drop, then settle — "giant mushrooms bloom
+  // in a sweep" per PLAN.md's own Fantasy Forest table. Each phase's
+  // scale/lift starts exactly where the previous one ended.
+  const capBindings: EventBinding[] = [
+    { phase: 'tension', archetype: 'SWEEP', params: { scaleFrom: 0.15, scaleTo: 1.0, liftFrom: -2, liftTo: 0, stagger: 0.75 } },
+    { phase: 'drop', archetype: 'BLOOM', params: { scaleFrom: 1.0, scaleTo: 1.25, liftFrom: 0, liftTo: 0.6 } },
+    { phase: 'transform', archetype: 'BLOOM', params: { scaleFrom: 1.25, scaleTo: 1.1, liftFrom: 0.6, liftTo: 0.3 } },
+    { phase: 'aftermath', archetype: 'BLOOM', params: { scaleFrom: 1.1, scaleTo: 1.0, liftFrom: 0.3, liftTo: 0 } },
+  ];
+  const capIndices = caps.map((_, i) => i);
   for (let i = 0; i < 110; i++) {
     const t = i / 110;
     const s = side(rng);
@@ -492,6 +613,7 @@ function buildForest(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#ff7fa8', shadow: '#2e5a4a', rim: '#ffe0ee', rimStrength: 0.7, emissive: 0.12 },
       matrices: caps,
       reactive: { drums: 0.35, mood: 0.25, event: 1.1 },
+      animated: createSignatureEventAnimated(caps, capIndices, capBindings),
     },
     { key: 'trunks', geometry: G.cylTaper, toon: { color: '#5a4030', shadow: '#1c3226', rim: '#d8ffb0', rimStrength: 0.4 }, matrices: trunks },
     { key: 'canopies', geometry: G.ico1, toon: { color: '#3f9a52', shadow: '#123a30', rim: '#e0ffa0', rimStrength: 0.5 }, matrices: canopies },
@@ -545,8 +667,35 @@ function buildVoid(route: RouteData<string>, seed: number): BuiltWorld {
     emissive: 0.6,
   });
 
+  // Rings rise and spin up during transform — "rings spin up" per the
+  // brief. A subset of the cyan solids scatters into chaos then
+  // reassembles during transform too — "solids scatter/reform into a
+  // structure". Both confined to a single phase (transform) so neither
+  // needs to worry about resetting at the next phase boundary.
+  const ringBindings: EventBinding[] = [
+    { phase: 'buildup', archetype: 'RISE', params: { liftFrom: -10, liftTo: -4 } },
+    { phase: 'tension', archetype: 'RISE', params: { liftFrom: -4, liftTo: 3 } },
+    { phase: 'drop', archetype: 'RISE', params: { liftFrom: 3, liftTo: 14 } },
+    { phase: 'transform', archetype: 'RISE', params: { liftFrom: 14, liftTo: 14, spinRate: 2.6 } },
+    { phase: 'reveal', archetype: 'RISE', params: { liftFrom: 14, liftTo: 14 } },
+    { phase: 'aftermath', archetype: 'RISE', params: { liftFrom: 14, liftTo: 0 } },
+  ];
+  const ringIndices = rings.map((_, i) => i);
+
+  const cyanScatterIndices = cyan.map((_, i) => i).filter((i) => i < 24);
+  const cyanBindings: EventBinding[] = [
+    { phase: 'transform', archetype: 'SCATTER_REFORM', params: { scatterRadius: 14, scatterHeight: 8, scatterSpins: 1.5 } },
+  ];
+
   const groups: PropGroup[] = [
-    { key: 'cyan', geometry: G.octa, toon: neon('#28e6ff', '#08324a'), matrices: cyan, reactive: { drums: 0.7, event: 2.0 } },
+    {
+      key: 'cyan',
+      geometry: G.octa,
+      toon: neon('#28e6ff', '#08324a'),
+      matrices: cyan,
+      reactive: { drums: 0.7, event: 2.0 },
+      animated: createSignatureEventAnimated(cyan, cyanScatterIndices, cyanBindings),
+    },
     { key: 'magenta', geometry: G.tetra, toon: neon('#ff3fc8', '#4a0a3a'), matrices: magenta, reactive: { drums: 0.7, event: 2.0 } },
     { key: 'gold', geometry: G.box, toon: neon('#ffd23f', '#4a3208'), matrices: gold, reactive: { drums: 0.7, event: 2.0 } },
     {
@@ -555,6 +704,7 @@ function buildVoid(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#8f5cff', shadow: '#1a0a3a', rim: '#ffffff', rimStrength: 1.0, emissive: 0.8 },
       matrices: rings,
       reactive: { drums: 0.8, event: 2.6 },
+      animated: createSignatureEventAnimated(rings, ringIndices, ringBindings),
     },
   ];
   return { groups, landmarkPositions };
@@ -611,6 +761,39 @@ function buildCarnival(route: RouteData<string>, seed: number): BuiltWorld {
     if (rng() < 0.8) bulbs.push(mat(new THREE.Vector3(p.x, p.y + 1.8, p.z), [0, 0, 0], [0.5, 0.5, 0.5]));
   }
 
+  // Ferris wheels rise then spin up during transform — matches the
+  // brief's "ferris wheels spin up" literally. A subset of bulbs chase-
+  // activates in a SWEEP, then settles exactly back to base at the drop.
+  const wheelBindings: EventBinding[] = [
+    { phase: 'buildup', archetype: 'RISE', params: { liftFrom: -6, liftTo: -2 } },
+    { phase: 'tension', archetype: 'RISE', params: { liftFrom: -2, liftTo: 1 } },
+    { phase: 'drop', archetype: 'RISE', params: { liftFrom: 1, liftTo: 6 } },
+    { phase: 'transform', archetype: 'RISE', params: { liftFrom: 6, liftTo: 6, spinRate: 3.2 } },
+    { phase: 'reveal', archetype: 'RISE', params: { liftFrom: 6, liftTo: 6 } },
+    { phase: 'aftermath', archetype: 'RISE', params: { liftFrom: 6, liftTo: 0 } },
+  ];
+  const wheelIndices = wheels.map((_, i) => i);
+  // Spokes are the wheel's own rigid support beams (2 per wheel, pushed
+  // right alongside it above) — they must rise/spin in exact lockstep
+  // with `wheels` or the rim visibly detaches from its own crossbeams.
+  // Same bindings, same group-relative timing, just a different matrices
+  // array/group.
+  const spokeIndices = spokes.map((_, i) => i);
+
+  // Bulbs 0-39 are exactly the rim lights of wheels 0-3 (10 per wheel,
+  // pushed immediately after each wheel above) — same lift/spin as
+  // `wheelBindings` on every phase so they stay mounted on their rim,
+  // plus their own chase-pattern scale flourish on tension/drop.
+  const bulbEventIndices = bulbs.map((_, i) => i).filter((i) => i < 40);
+  const bulbBindings: EventBinding[] = [
+    { phase: 'buildup', archetype: 'RISE', params: { liftFrom: -6, liftTo: -2 } },
+    { phase: 'tension', archetype: 'SWEEP', params: { liftFrom: -2, liftTo: 1, scaleFrom: 0.3, scaleTo: 1.4, stagger: 0.85 } },
+    { phase: 'drop', archetype: 'ACTIVATE', params: { liftFrom: 1, liftTo: 6, scaleFrom: 1.4, scaleTo: 1.0 } },
+    { phase: 'transform', archetype: 'RISE', params: { liftFrom: 6, liftTo: 6, spinRate: 3.2 } },
+    { phase: 'reveal', archetype: 'RISE', params: { liftFrom: 6, liftTo: 6 } },
+    { phase: 'aftermath', archetype: 'RISE', params: { liftFrom: 6, liftTo: 0 } },
+  ];
+
   const groups: PropGroup[] = [
     {
       key: 'wheels',
@@ -618,8 +801,15 @@ function buildCarnival(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#ff5a3a', shadow: '#4a0a12', rim: '#ffd8a0', rimStrength: 0.8, emissive: 0.3 },
       matrices: wheels,
       reactive: { drums: 0.6, event: 2.2 },
+      animated: createSignatureEventAnimated(wheels, wheelIndices, wheelBindings),
     },
-    { key: 'spokes', geometry: G.box, toon: { color: '#8a2a24', shadow: '#2a0608', rim: '#ffb090', rimStrength: 0.4 }, matrices: spokes },
+    {
+      key: 'spokes',
+      geometry: G.box,
+      toon: { color: '#8a2a24', shadow: '#2a0608', rim: '#ffb090', rimStrength: 0.4 },
+      matrices: spokes,
+      animated: createSignatureEventAnimated(spokes, spokeIndices, wheelBindings),
+    },
     { key: 'tents', geometry: G.cone8, toon: { color: '#e8434f', shadow: '#400a26', rim: '#ffd0c0', rimStrength: 0.55 }, matrices: tents },
     { key: 'booths', geometry: G.box, toon: { color: '#c8563a', shadow: '#330c18', rim: '#ffc8a0', rimStrength: 0.45 }, matrices: booths },
     {
@@ -628,6 +818,7 @@ function buildCarnival(route: RouteData<string>, seed: number): BuiltWorld {
       toon: { color: '#ffe07a', shadow: '#a04a20', rim: '#fff8e0', rimStrength: 0.2, emissive: 1.0 },
       matrices: bulbs,
       reactive: { drums: 0.8, event: 2.4 },
+      animated: createSignatureEventAnimated(bulbs, bulbEventIndices, bulbBindings),
     },
   ];
   return { groups, landmarkPositions };

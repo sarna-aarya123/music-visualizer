@@ -516,8 +516,130 @@ anticipation-pullback cue are all untouched — confirmed via `git diff`
 showing only the two new blocks (the ref declarations and the shot
 application) plus one added line in the look-target chain.
 
-**Stage 5 — Event archetype library + per-world bindings.** The nine
-worlds' signature events.
+**Stage 5 — DONE (2026-08-28). Event archetype library + per-world
+signature events.** The first content stage — Stage 1's animated-instance
+plumbing finally has something in it.
+
+**Architecture, matching this stage's brief exactly:**
+`WorldDirector` decides WHEN (unchanged — it already owns `sequence`, the
+phase/timing every event below is keyed off; it gained no new code this
+stage). A new `world/worldEvents.ts` is the "world event executor": generic,
+world-agnostic per-instance transform math. Each world's own `build()` (in
+`worlds/definitions.ts`, plus `floatingIslands/Islands.tsx` for the bespoke
+world) supplies the "world data" — which existing prop-group instances
+participate and with what archetype/parameters, as a plain `EventBinding[]`
+list. `WorldDirector` never touches a `Matrix4` or a mesh.
+
+**Ten named archetypes, four real evaluator functions** (generic behaviors,
+not ten separate implementations):
+- `riseLike` — a lift + scale envelope, eased. Covers RISE, SUMMON, BLOOM,
+  SURGE, ACTIVATE, REVEAL, and SWEEP (SWEEP adds a per-index stagger on
+  top so the same envelope reads as a wave through the group).
+- `spinUp` (and `riseLike`'s own optional `spinRate`, for lift+spin
+  combined) — constant-rate rotation around the instance's own local axis.
+- `scatterReform` — deterministic per-index scatter (cheap sine-hash, not
+  `Math.random()` or a seeded RNG closure — zero allocation, same instance
+  always scatters to the same offset every playthrough) that eases back to
+  exactly the base transform.
+- `FLYOVER` — **not wired into any world's bindings this stage.** It would
+  be a translate-across variant of the same primitives applied to a single
+  instance, but no world has an existing standalone "flying object" prop
+  to reuse without adding new geometry (explicitly out of scope this
+  stage). The type exists; no binding uses it. Flagged here rather than
+  left as a silent gap.
+
+**Per-world signature events** (all built from each world's own *existing*
+hero/landmark prop groups — no new geometry):
+
+| World | Group(s) animated | What happens |
+|---|---|---|
+| Cyberpunk Night | `towers` (6 tallest, capped for focus) + their own `windows` | Towers surge up through buildup→drop→transform, hold at full height through reveal, settle in aftermath; their window bands rise in exact lockstep (see "coherence" below) and cascade on in a staggered SWEEP during tension, with a synced brightness pulse at the drop |
+| Desert Dream | `pyramids` (all 11) | Rise dramatically at the drop, keep climbing through transform, then rotate slowly (`riseLike`'s combined spin) for the whole reveal phase while holding at peak height |
+| Underwater Abyss | `whales` (all 5) + `coral` (subset) | Whales surge upward through the sequence; coral blooms in a staggered wave with a synced pulse at the drop |
+| Outer Dimension | `rings` (all 7) | Rise to full height by the drop, then spin up during transform (single-phase, holds afterward) |
+| PS2 Night | `lampHeads` (all 46) | Staggered SWEEP "activation" down the street (scale pop), settling exactly back to base at the drop — literally "street lights activate in a sweep" |
+| Fantasy Forest | `caps` (all 60) | Bloom open in a staggered SWEEP during tension, a synced pulse at the drop, settling through transform/aftermath |
+| Abstract Void | `rings` (all 10) + `cyan` (first 24) | Rings rise then spin up during transform; a subset of cyan solids scatters into chaos and reassembles during that same phase — "solids scatter/reform" |
+| Chaotic Carnival | `wheels` (all 8) + `spokes` (all 16) + `bulbs` (first 40, wheels 0-3's rim lights) | Wheels rise then spin up during transform — literally "ferris wheels spin up"; spokes move in exact lockstep (they're the wheel's own rigid crossbeams); a bulb subset chase-activates during tension |
+| Floating Islands (bespoke) | pagoda `body`/`roof` tiers (all) | The world's signature structure rises out of the islands through the sequence, settling back down in aftermath — implemented by hand (see below), not through `createSignatureEventAnimated` |
+
+**A real coherence bug found and fixed during this pass:** initially only
+each world's *hero* group (towers, wheels) was bound to an event, leaving
+their rigidly-attached decoration (window bands mounted on the facade,
+ferris-wheel support spokes, rim bulbs) at their original height while the
+hero structure rose or spun — the decoration would visibly detach from
+what it's physically part of. Fixed by giving every attached secondary
+group the *identical* lift/spin binding as its parent (see `windowBindings`/
+`spokeIndices`/bulb binding in `definitions.ts`) so structurally-connected
+pieces always move together. `coral`/carnival's chase-bulb *pattern* itself
+(not tied to a rigid parent) was left as its own independent flourish.
+
+**Floating Islands** hand-rolls its pagoda-rise event directly in
+`Islands.tsx` rather than going through `OutlinedInstances`/
+`createSignatureEventAnimated`, because that file already hand-rolls its
+own instanced-mesh updates (predates Stage 1; folding it onto the shared
+path remains flagged follow-up debt, not a Stage 5 prerequisite). It
+reuses `worldEvents.ts`'s exported `riseLike` directly for the actual
+math — same tuned behavior, no reimplementation.
+
+**A second real bug found and fixed:** `Islands.tsx`'s hand-rolled version
+initially only wrote new matrices while a binding was active, which meant
+a seek/reset landing exactly mid-event would freeze the pagodas
+permanently in their risen position (the idle case never wrote anything to
+undo it). Fixed with edge-triggered detection (`pagodaEventWasActive`) —
+one guaranteed "restore to base" pass the instant the event stops for any
+reason, then zero further work until the next event, preserving both
+correctness and the near-zero idle cost. **`createSignatureEventAnimated`'s
+`OutlinedInstances`-based path does not have this bug** — Stage 1's
+contract already calls `sample()` unconditionally every frame for every
+flagged index, so it recomputes from scratch (idle → exact base copy)
+every single frame regardless of what happened the frame before; the
+Islands.tsx hand-rolled path needed the explicit edge-detection specifically
+*because* it optimizes away that unconditional per-frame recompute.
+
+**Route/collision:** every event is pure vertical lift, scale, or rotation
+around a prop's own existing position — nothing moves laterally into the
+corridor, nothing changes `routeGenerator.ts` or clearance math (`git diff`
+confirms zero touches). `CameraRig.tsx`, `cinematicDirector.ts`,
+`musicEventDirector.ts`, `musicController.ts`, `FeatureExtractor.ts`,
+`beatConsumer.ts` are all zero diff.
+
+**Determinism/continuity discipline:** every `SPIN_UP`/combined-spin
+binding is confined to a single sequence phase (never spans two) — a
+constant rate integrated against that phase's own `phaseTime` is exact and
+continuous within the phase, but would snap to a different angle at a
+phase boundary where `phaseTime` resets to 0, so no binding does that.
+Consecutive phases' `liftFrom`/`liftTo` (etc.) are authored to match at
+every boundary within one binding list, so a single prop's own arc never
+visibly snaps — but **bindings do not cross-fade into each other's
+different evaluator types the way Stage 4's camera shots do** (e.g. a
+group switching from `riseLike` to `SCATTER_REFORM` between phases would
+snap). None of the bindings actually authored this stage do that (the one
+`SCATTER_REFORM` binding — Void's cyan subset — is deliberately isolated
+to a single phase with no adjacent lift binding, so its "snap into
+scattered" at that phase's start is an intentional beat, not an
+oversight). This is a real, documented limitation, not silently avoided:
+props tolerate a harder cut far better than the camera does, and building
+full cross-fade machinery for this pass's scope wasn't worth the
+complexity — flagged as a Stage 6+ concern if a future binding needs it.
+
+**Known simplification:** Carnival's rim bulbs get the wheel's *vertical*
+lift/spin so they don't visually detach, but do not orbit around the
+wheel's true rotation center as it spins (that would need each bulb's
+evaluator to know the wheel's pivot, not just mirror its lift) — small,
+numerous, and already drawing attention via their own scale-chase, so
+this reads as a minor imperfection rather than a coherence bug. Flagged
+as a real gap for whoever author the next set of bindings.
+
+**Performance:** `createSignatureEventAnimated`'s `sample()` runs every
+frame for every flagged index (Stage 1's existing contract — same as any
+other animated group), even when idle (a cheap `out.copy(base)` early
+return). Total animated-instance counts per world stay well under 150
+(largest: PS2's 46 + Forest's 60; smallest meaningful: Outer's 7) — small
+relative to Stage 0's own finding that even ~1,660-instance full rewrites
+cost well under 0.5ms. Measured live: **60fps sustained both at rest and
+during an active event** (browser `requestAnimationFrame` sampling, see
+§8) — no measurable frame-time regression from this stage.
 
 **Stage 6 — Background/distant event layer.**
 
@@ -696,9 +818,52 @@ and unmount with zero console errors; a full synthetic-track playthrough
   route/landmark data every world already provides identically, but worth
   a spot-check in a future session if a world-specific visual issue is
   ever reported.
-- **5 (world events):** each world's signature events fire at appropriate
-  moments; nothing intersects the walkway; every event returns cleanly to
-  rest state.
+- **5 (world events) — DONE (2026-08-28), genuinely verified live:**
+  browser pane composited frames this session (`document.hidden` was
+  `false`). `tsc -b`/`build` clean. All 9 worlds cycled at rest with a
+  screenshot each — zero console errors, all render exactly as before
+  this stage (confirms "existing worlds still work when no event is
+  active"). A synthetic drop track triggered signature events on three
+  worlds with screenshots:
+  - **Chaotic Carnival:** an extreme close shot on the ferris wheel's
+    glowing spokes mid-sequence (strong bloom halo, clearly the
+    SPIN_UP/rise event, not a lighting-only change); a later shot showed
+    the wheel back at normal height/rest after the sequence ended.
+  - **Cyberpunk Night:** a dramatic low-angle shot with the ENTIRE
+    skyline's windows brilliantly lit (the ACTIVATE/SWEEP cascade), then
+    a wide aerial shot moments later — visibly different composition,
+    confirming both the camera and the event evolved together.
+  - **Fantasy Forest:** an extreme close shot on oversized, overexposed
+    mushroom caps (the BLOOM scale-up), then a wider shot showing
+    noticeably larger pink caps than the at-rest baseline screenshot.
+  Natural end → restart re-triggered a full event correctly each time
+  (tested on Carnival and Cyberpunk). A mid-event seek (Fantasy Forest)
+  immediately returned the mushroom cap to its normal (un-bloomed) size
+  and the camera to normal framing, with zero errors — confirms reset
+  works correctly during an active event, not just between sequences.
+  World-switch mid-loaded-track was exercised (Cyberpunk → Floating
+  Islands → Cyberpunk) with zero errors. **Performance:** live FPS
+  sampling via `requestAnimationFrame` showed **60fps both at rest and
+  during an active event** (3s sample spanning buildup→transform) — no
+  measurable degradation.
+  **Not performed, flagged as outstanding:** a detailed per-world
+  screenshot pass for the other 6 worlds' signature events (Desert,
+  Abyss, Outer Dimension, PS2, Void, Floating Islands) — only confirmed
+  at rest, not with an active event captured. Given time already spent on
+  this stage and that every world's binding uses the exact same four
+  evaluator functions already visually confirmed working correctly on
+  three worlds, this is a reasonable but real gap, not a claim of full
+  coverage. A definitive (non-screenshot-luck-dependent) verification —
+  e.g. reading the actual `InstancedMesh` matrices from the live scene
+  graph — was attempted and abandoned (the fiber-tree traversal used to
+  locate the R3F scene didn't succeed in the time available); screenshots
+  remain the verification method actually used.
+  **One testing-methodology note, not a Stage 5 bug:** the synthetic
+  track's cold-start trigger timing (same pre-existing, unmodified
+  `musicEventDirector.ts` characteristic flagged in Stage 4's write-up)
+  again made it hard to predict exactly which real-clock second would
+  show which phase, so screenshots were taken opportunistically across a
+  spread of timestamps rather than at planned phase boundaries.
 - **6 (background):** distant events never obscure the path or the
   character; frequency stays rare.
 - **7 (abilities):** abilities remain rare and musically earned; landing
