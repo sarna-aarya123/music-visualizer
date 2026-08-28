@@ -415,8 +415,106 @@ runs ≈13s — already longer than the unchanged 7s `MIN_EVENT_GAP` — the
 effective gap between sequence starts is `max(7, 13) = 13s` without
 `MIN_EVENT_GAP` itself needing to change.
 
-**Stage 4 — Moving cinematic shots.** Camera paths over time; director
-drives the camera channel.
+**Stage 4 — DONE (2026-08-28). Moving cinematic camera shots for the major-
+event sequence.** Three reusable motion primitives in a new
+`world/cameraShots.ts`, all pure/deterministic functions of
+(phase, elapsed-in-phase, shot params, target) with zero per-frame
+allocation (persistent module-level scratch vectors, mutated via
+`.copy()`/`.addScaledVector()`/`.applyAxisAngle()`, never `.clone()`):
+
+- **`push`** — camera at a distance from `target` along `-tangent`
+  (+height/lateral offset) that eases between a start and end distance.
+  Approaching = dolly-in; receding = dolly-out/reveal. One primitive
+  covers both, per the brief's "smaller set of excellent primitives"
+  guidance.
+- **`orbit`** — camera revolves around `target` at a fixed radius/height,
+  sweeping a partial arc (not a full loop) with eased angular velocity.
+- **`sweep`** — camera translates along a line passing `target`, from a
+  "before" to an "after" lateral+along-route offset at a given height.
+  Flyby, sweeping-aerial, and ground-level-pass are all this primitive at
+  different height/span parameters (only the elevated "sweep" variant is
+  wired into the default phase table below; ground-level pass is
+  implemented as a parameterization, not separately wired in — noted as a
+  tuning knob, not a gap, since the primitive already supports it).
+
+**Target:** locked once per sequence — the nearest landmark to the
+character when the sequence leaves `'idle'` (within 90 units), or a point
+40 units ahead along the route if none is close — rather than re-picked
+every frame, so the shot math has a fixed point to reason about for the
+whole ~13s sequence instead of jumping if a different landmark becomes
+nearest mid-sequence. Cleared by `resetSequenceCameraShot()`.
+
+**Phase → shot table** (in `cameraShots.ts`, data not a hardcoded switch):
+buildup = push in (46→27 units), tension = orbit (37° arc), drop = a fast
+push punch-in (20→12 units — mostly hidden behind cinematicDirector's
+existing cut, see below), transform = a wide elevated sweep (64-unit
+excursion), reveal = push out (22→48 units — the "here's what changed"
+pull-back), aftermath = a slow orbit that fades out. Distances are all
+5-10× the normal chase camera's own offsets (`FOLLOW_DIST`=5.5,
+`FOLLOW_HEIGHT`=3.3), so the shots read as a clearly different framing,
+not a subtle nudge — directly answering the "must be noticeable"
+requirement.
+
+**No snapping:** two mechanisms. (1) The whole shot system eases in over
+the first 60% of `buildup` and back out over the last 60% of `aftermath`
+(a real beginning/middle/end), rather than an instant on/off. (2) Every
+phase boundary cross-fades toward the next phase's shot (evaluated at its
+own progress 0) over the last 0.35s of the current phase, so consecutive
+primitives — which have no reason to land on the same point analytically —
+never jump between each other.
+
+**Architecture — decisions vs. rendering, kept separate as instructed:**
+`WorldDirector.getSequenceCameraShot(...)` is the one new facade method
+(pure delegation to `cameraShots.ts`, matching the `step`/`reset` pattern
+from Stages 2-3) — this is "what shot + when". `CameraRig` is the only
+thing that calls it and the only thing that ever touches `camera.*`; it
+composes the returned blend weight with everything else already in the
+file (`(1 - cineBlend) * (1 - modeBlend)`) and applies the result via the
+same `position.clone().lerp(...)` pattern the file already used for the
+cinematicDirector blend. `WorldDirector` itself gained no rendering
+logic — its new method is a single delegating call, same shape as `step`/
+`reset`.
+
+**Coexistence with the existing `cinematicDirector.ts` cut — zero diff to
+that file.** Rather than touching its lifecycle (explicitly to be avoided
+"unless absolutely necessary" — it wasn't), the new sequence shot
+multiplies its blend by `(1 - cineBlend)`, so cinematicDirector's existing
+major-event landmark/dramatic-close cut (which already fires on the same
+`impactEventId`, unchanged) always wins during its own ~3.0-3.2s active
+window right at the drop, and the sequence shot fades back in smoothly as
+that cut's own envelope fades out. This reuses the *existing* cinematic
+shot as the sequence's natural "drop: decisive movement" beat (satisfying
+that part of the brief's example arrangement for free) while the *new*
+primitives own buildup/tension (before the cut) and transform/reveal/
+aftermath (after it) — deliberately not the exact per-phase arrangement
+the brief's example proposed 1:1 (that example didn't account for the
+existing cut still being live for the first ~2.5s of `transform`), because
+routing camera control that way exactly matches the brief's own
+"the existing cinematicDirector lifecycle" being preserved.
+
+**Verified with genuine visual confirmation** (browser pane composited
+frames this session): `tsc -b`/`build` clean; all 9 worlds cycled with a
+screenshot, zero console errors; the sequence watched across two full
+restarts with closely-spaced screenshots showing clearly distinct,
+evolving framings (a wide elevated shot, a close landmark shot, a tight
+character close-up, an inside-the-landmark shot at different points in
+the same run) — not two static presets, genuine movement through space;
+camera cleanly returned to normal chase framing after each sequence ended
+(no stuck state); a mid-sequence seek cancelled the shot immediately with
+zero errors and no lingering elevated framing; first-person mode confirmed
+unaffected (the shot's `(1 - modeBlend)` suppression works). See §8 for
+the full verification writeup, including a testing-methodology caveat
+about the synthetic test track's trigger timing.
+
+**Left untouched, deliberately (all zero diff, confirmed via
+`git diff --name-only`):** `cinematicDirector.ts`, `Character.tsx`,
+`musicEventDirector.ts`, `FeatureExtractor.ts`, `beatConsumer.ts`, route
+generation, collision/clearance. Inside `CameraRig.tsx` itself: beat/drop
+consumption, hi-hat/snare exclusion, first/third-person blend rate, FOV
+base formula, speed-scaled follow distance/height, and the Stage 3
+anticipation-pullback cue are all untouched — confirmed via `git diff`
+showing only the two new blocks (the ref declarations and the shot
+application) plus one added line in the look-target chain.
 
 **Stage 5 — Event archetype library + per-world bindings.** The nine
 worlds' signature events.
@@ -555,10 +653,49 @@ and unmount with zero console errors; a full synthetic-track playthrough
   applying edits as they were written; a fresh tab (per `HANDOFF.md`'s
   documented caveat) showed zero errors against the final code, and the
   full verification pass above was run against that clean state.
-- **4 (camera):** no shot clips through geometry; the character is framed
-  or deliberately absent in every shot; a hard fallback to the gameplay
-  camera always exists; **re-confirm hi-hats/snares never move the camera**
-  (grep + runtime).
+- **4 (camera) — DONE (2026-08-28), genuinely verified live:** browser pane
+  composited frames this session (`document.hidden` was `false`). `tsc -b`/
+  `build` clean. All 9 worlds cycled with a screenshot each, zero console
+  errors. The sequence was watched across two full restarts on Chaotic
+  Carnival with closely-spaced screenshots: distinctly different framings
+  captured at different points in the same run (a wide elevated shot over
+  a ring landmark, a tight character close-up with strong rim light, a
+  close orbiting shot from inside/near the landmark, a receding wide shot)
+  — genuine evolving camera movement, not two static presets toggling.
+  Camera returned cleanly to normal third-person chase framing after each
+  sequence completed, with no stuck/frozen state. A mid-sequence seek
+  cancelled the shot immediately (zero errors, no lingering elevated
+  framing). First-person mode confirmed unaffected — toggling to it during
+  an active sequence showed a normal first-person view with no shot
+  bleed-through, confirming the `(1 - modeBlend)` suppression works.
+  **A hard fallback to the gameplay camera exists structurally**: the
+  sequence shot only ever *lerps toward* the gameplay-computed `position`/
+  `lookTarget` by a weight that is 0 whenever `WorldDirector.sequence.phase
+  === 'idle'` (returned directly, no shot math even runs) — there is no
+  code path where the gameplay camera computation itself is skipped.
+  **Re-confirmed hi-hats/snares never move the camera:** `cameraShots.ts`
+  consumes no audio features at all (only `MajorEventState`/route/landmark
+  data); `git diff` on `CameraRig.tsx` shows the existing beat-consumption
+  block (which already excludes hi-hats/snares) is untouched.
+  **Testing-methodology caveat, not a Stage 4 bug:** the synthetic test
+  track used to exercise the sequence triggered unusually early (within
+  ~1-2s of playback/seek starting, well before the track's intended ~3s
+  "drop" point) on multiple runs. This traces to the *existing, unmodified*
+  trigger-sensitivity of `musicEventDirector.ts`'s trigger conditions
+  reacting to a freshly-reset `FeatureExtractor` baseline meeting sudden
+  audio — `git diff` confirms zero changes to that file, `FeatureExtractor.ts`,
+  or any threshold this stage. It made the *exact* real-time phase timeline
+  harder to predict when scripting screenshots, but did not prevent
+  verifying the actual thing this stage needed to prove (visible,
+  evolving, non-snapping camera movement across a real sequence,
+  triggered via the app's own unmodified detection, not a stub). **Not
+  performed:** an exhaustive multi-world sweep of the sequence itself (only
+  Chaotic Carnival was used for the detailed sequence capture; the other 8
+  worlds were only confirmed for normal-gameplay rendering, not with an
+  active sequence) — reasonable given the shot math only depends on
+  route/landmark data every world already provides identically, but worth
+  a spot-check in a future session if a world-specific visual issue is
+  ever reported.
 - **5 (world events):** each world's signature events fire at appropriate
   moments; nothing intersects the walkway; every event returns cleanly to
   rest state.

@@ -117,6 +117,12 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
   const smoothedCurvatureBank = useRef(0);
   const modeBlend = useRef(mode === 'first' ? 1 : 0);
   const chaseLag = useRef<THREE.Vector3 | null>(null);
+  // Phase 6 Stage 4: written by WorldDirector.getSequenceCameraShot every
+  // frame, reused in place — never reallocated (see cameraShots.ts's own
+  // zero-allocation discipline; this is the same pattern extended to the
+  // two output vectors it writes into).
+  const seqShotPos = useRef(new THREE.Vector3());
+  const seqShotLook = useRef(new THREE.Vector3());
 
   // Decaying impulses — each a distinct kind of movement, so a reaction
   // doesn't always look like "tilt sideways".
@@ -331,6 +337,35 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
       position = position.clone().lerp(shot.position, cineBlend);
       cinematicLook = shot.look;
     }
+
+    // Phase 6 Stage 4: the major-event sequence's own moving camera shot
+    // (dolly/orbit/sweep — see cameraShots.ts) — WorldDirector decides
+    // WHICH primitive and WHEN (a pure function of the sequence's phase/
+    // elapsed time), this only applies the result. Deliberately yields to
+    // an active cinematicDirector cut via `(1 - cineBlend)`: the two
+    // systems would otherwise fight for the camera during the brief window
+    // right at the drop, when cinematicDirector's own existing landmark/
+    // dramatic-close shot is already framing the release. The sequence
+    // shot fades back in smoothly as that cut's own blend fades out (both
+    // use eased envelopes), so control hands off without a snap — see
+    // PLAN.md for the exact timing this relies on. Also yields to
+    // first-person via `(1 - modeBlend)`, matching every other cinematic
+    // effect in this file.
+    const seqBlendRaw = WorldDirector.getSequenceCameraShot(
+      frame.position,
+      frame.tangent,
+      frame.right,
+      frame.up,
+      world.landmarkPositions,
+      seqShotPos.current,
+      seqShotLook.current
+    );
+    const seqBlend = seqBlendRaw * (1 - cineBlend) * (1 - modeBlend.current);
+    let seqLook: THREE.Vector3 | null = null;
+    if (seqBlend > 0) {
+      position = position.clone().lerp(seqShotPos.current, seqBlend);
+      seqLook = seqShotLook.current;
+    }
     camera.position.copy(position);
 
     // --- Orientation: stable, world-up-referenced, never a Frenet frame.
@@ -371,6 +406,7 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
       .addScaledVector(frame.up, lookYClamped);
     let lookTarget = thirdPersonLook.clone().lerp(firstPersonLook, modeBlend.current);
     if (cinematicLook) lookTarget = lookTarget.clone().lerp(cinematicLook, cineBlend);
+    if (seqLook) lookTarget = lookTarget.clone().lerp(seqLook, seqBlend);
     camera.lookAt(lookTarget);
 
     // --- FOV: base + speed-driven widening (a classic speed cue, tied to
