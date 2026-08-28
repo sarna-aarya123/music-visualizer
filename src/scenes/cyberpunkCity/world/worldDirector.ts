@@ -7,10 +7,11 @@ import {
   PHASE_DURATIONS,
   type MajorEventState,
 } from './musicEventDirector';
+import { getSequenceCameraShot, resetSequenceCameraShot } from './cameraShots';
 
 /**
- * Phase 6 Stage 2 established this seam; Stage 3 is the first thing that
- * actually grows it.
+ * Phase 6 Stage 2 established this seam; Stage 3 grew it with sequence
+ * state; Stage 4 adds the camera-shot decision below.
  *
  * `PLAN.md` §3 describes a WorldDirector that owns *decisions* while
  * separate *executors* own rendering: "The director never draws
@@ -62,6 +63,36 @@ export const WorldDirector = {
    *  `resetRhythmState` calls this intentionally does not fold in. */
   reset(): void {
     resetMusicEventDirector();
+    resetSequenceCameraShot();
+  },
+
+  /** Phase 6 Stage 4: the "what shot + when" decision for the major-event
+   *  sequence's camera path. Delegates entirely to `cameraShots.ts` (the
+   *  phase -> shot-primitive table and per-frame evaluation math both live
+   *  there, not here — this stays a one-line dispatch, same as `step`/
+   *  `reset`). `CameraRig` is the only thing that turns the returned blend
+   *  weight and written position/look into an actual `camera.*` change;
+   *  WorldDirector never touches rendering. */
+  getSequenceCameraShot(
+    characterPos: THREE.Vector3,
+    tangent: THREE.Vector3,
+    right: THREE.Vector3,
+    up: THREE.Vector3,
+    landmarks: THREE.Vector3[],
+    outPosition: THREE.Vector3,
+    outLook: THREE.Vector3
+  ): number {
+    return getSequenceCameraShot(
+      majorEventState,
+      PHASE_DURATIONS,
+      characterPos,
+      tangent,
+      right,
+      up,
+      landmarks,
+      outPosition,
+      outLook
+    );
   },
 
   /** Read-only view of the current major-event sequence's raw

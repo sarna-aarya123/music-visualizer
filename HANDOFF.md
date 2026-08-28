@@ -18,11 +18,12 @@ direction, matching a reference concept-art sheet (`public/reference.png`).
 
 **Status:** feature-complete and visually signed off by the user. The next
 phase — **Phase 6: Spectacle, Events & the World Director** — is under way;
-see `PLAN.md`. Stages 0-3 are done (dynamic instance-matrix plumbing, a
-`WorldDirector` facade, and a real 10-15s multi-phase major-event sequence
-replacing the old ~2.57s flash). Stage 4 onward (moving cinematic shots,
-world-event archetypes, anything visual/new-geometry) has **not** started
-and needs approval before work resumes.
+see `PLAN.md`. Stages 0-4 are done (dynamic instance-matrix plumbing, a
+`WorldDirector` facade, a real 10-15s multi-phase major-event sequence
+replacing the old ~2.57s flash, and moving camera shots — dolly/orbit/
+sweep — for that sequence). Stage 5 onward (world-event archetypes,
+per-world signature events, anything with new geometry) has **not**
+started and needs approval before work resumes.
 
 ---
 
@@ -88,13 +89,22 @@ rhythmState              WorldDirector (facade)          musicController
         World render components (per world)
 ```
 
-`WorldDirector` (Phase 6 Stages 2-3) is the sole entry point for
+`WorldDirector` (Phase 6 Stages 2-4) is the sole entry point for
 *advancing*/*resetting* the major-event sequence, and the sole place
 `CameraRig`/`musicController` read its raw phase/timing from. Everything
 else that only needs the smoothed 0..1 envelope
 (`getMajorEventEnvelope()`) still imports it directly from
 `musicEventDirector.ts` — deliberately not rerouted; see that file's and
 `worldDirector.ts`'s doc comments.
+
+Stage 4 added `WorldDirector.getSequenceCameraShot(...)` — the "what
+moving camera shot + when" decision for the sequence (dolly/orbit/sweep
+primitives, see `world/cameraShots.ts`), delegated to exactly like `step`/
+`reset`. `CameraRig` is the only thing that calls it and the only thing
+that ever touches `camera.*`; it composes the result with the existing
+`cinematicDirector` cut (which still fires unchanged on the same
+`impactEventId` and always wins during its own brief active window) and
+the first/third-person blend before applying anything.
 
 **The golden rule:** per-frame data never goes through React state. It
 lives in mutable module-level singletons that components read inside
@@ -140,8 +150,9 @@ The folder name is a leftover misnomer. It contains no world any more:
 | `MusicEventDirector.tsx` / `RhythmState.tsx` | Thin non-rendering `useFrame` mounts that step their singletons. |
 | `world/routeGenerator.ts` | Closed-loop Catmull-Rom route + per-region corridor radius. Generic over region name. |
 | `world/musicController.ts` | Speed model + `speedPerceptionFrac` (shared "how fast does this feel"). |
-| `world/worldDirector.ts` | The `WorldDirector` facade — `step()`/`reset()` advance/clear the major-event sequence; `sequence`/`phaseDurations` getters expose its raw phase/timing to the two consumers that need it. |
+| `world/worldDirector.ts` | The `WorldDirector` facade — `step()`/`reset()` advance/clear the major-event sequence; `sequence`/`phaseDurations` getters expose its raw phase/timing; `getSequenceCameraShot(...)` is the camera-shot decision (Stage 4), delegated to `cameraShots.ts`. |
 | `world/musicEventDirector.ts` | Rare major events: a real 6-phase (buildup/tension/drop/transform/reveal/aftermath), ≈13s sequence — intensity, origin, exactly-once `impactEventId`, continuous envelope. Driven only via `worldDirector.ts`. |
+| `world/cameraShots.ts` | Stage 4: three pure, zero-allocation camera-path primitives (`push`/`orbit`/`sweep`) + the phase→shot table for the major-event sequence, plus the per-sequence locked-target logic. No rendering — `CameraRig` applies what this computes. |
 | `world/rhythmState.ts` | `drumPresence`, `energyTrend`. |
 | `world/cinematicDirector.ts` | Shot types, selection priority, blend envelope, shot transforms. |
 | `world/{camera,character}MotionState.ts`, `groundImpactState.ts` | Cross-system singletons. |
@@ -284,11 +295,11 @@ attempts failed because they used smooth realistic shading.
 ## 10. Git state
 
 - Branch `main`, synced with `github.com/sarna-aarya123/music-visualizer`.
-- Recent history (newest first): Phase 6 Stage 3 (long-form sequences),
-  Stage 2 (parity director refactor), Stage 1 (instance-matrix plumbing),
-  the `HANDOFF.md`/`PLAN.md` rewrite, the next-phase plan, the nine
-  cel-shaded worlds (the big rebuild). Run `git log --oneline` for exact
-  hashes rather than hand-tracking them here.
+- Recent history (newest first): Phase 6 Stage 4 (moving camera shots),
+  Stage 3 (long-form sequences), Stage 2 (parity director refactor),
+  Stage 1 (instance-matrix plumbing), the `HANDOFF.md`/`PLAN.md` rewrite,
+  the next-phase plan, the nine cel-shaded worlds (the big rebuild). Run
+  `git log --oneline` for exact hashes rather than hand-tracking them here.
 - Check `git status` for whether the working tree is clean and whether
   local commits are ahead of `origin/main` — pushes are not automatic.
 
@@ -301,7 +312,7 @@ by real 3D worlds), but it's kept as the visual source of truth.
 ## 11. What's next
 
 See **`PLAN.md`** for the full stage-by-stage plan and history. Current
-state (2026-08-27): Stages 0-3 done and committed —
+state (2026-08-28): Stages 0-4 done and committed —
 
 - **Stage 0:** investigation (perf/architecture for animatable instances).
 - **Stage 1:** `OutlinedInstances`/`PropGroup` gained opt-in per-frame
@@ -314,8 +325,14 @@ state (2026-08-27): Stages 0-3 done and committed —
   built entirely from existing effects (camera FOV/altitude, existing
   landmark cinematic shots, world prop emissive/rim, post-processing) —
   see `PLAN.md` §7 for exact timing and what changed.
+- **Stage 4:** the sequence's camera now genuinely moves through space —
+  three reusable primitives (`push`/`orbit`/`sweep` in
+  `world/cameraShots.ts`) mapped to the six phases, composed with (and
+  yielding priority to) the existing `cinematicDirector` cut so the two
+  systems never fight for the camera. See `PLAN.md` §7 for the exact
+  phase→shot table and how the priority/cross-fade works.
 
-**Stage 4 (moving cinematic shots) has NOT been approved or started.**
-Neither has anything beyond it (event archetypes, background/distant
-events, character abilities, Stage A pre-analysis). **Do not start coding
-further stages without explicit go-ahead.**
+**Stage 5 (world-event archetypes, per-world signature events) has NOT
+been approved or started.** Neither has anything beyond it (background/
+distant events, character abilities, Stage A pre-analysis). **Do not
+start coding further stages without explicit go-ahead.**
