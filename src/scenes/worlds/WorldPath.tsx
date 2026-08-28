@@ -220,8 +220,11 @@ export function WorldPath({
 
     const beat = consumeBeat(featureFrame, beatState);
     if (beat > 0) { impactStart.current = t; impactStrength.current = beat; impactCenter.current.copy(cam); }
+    // Phase 6 Stage 7 readability pass: major-event ground ripple eased
+    // back (was 3.2 + major*2.2) so the sweeping glow band reads as a
+    // strong pulse rather than a blinding wall of light across the deck.
     const major = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorState);
-    if (major > 0) { impactStart.current = t; impactStrength.current = 3.2 + major * 2.2; impactCenter.current.copy(cam); }
+    if (major > 0) { impactStart.current = t; impactStrength.current = 2.0 + major * 1.3; impactCenter.current.copy(cam); }
     const land = consumeEvent(groundImpactState.id, groundImpactState.strength, landState);
     if (land > 0) { impactStart.current = t; impactStrength.current = land; impactCenter.current.copy(groundImpactState.position); }
 

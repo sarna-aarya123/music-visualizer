@@ -90,10 +90,12 @@ const SkyMaterial = shaderMaterial(
       col = mix(col, cloudCol, mask * 0.9);
 
       // Music: mood sets overall exposure, beats lift it briefly, a major
-      // event blows the whole sky toward warm white.
+      // event warms and brightens the sky. Phase 6 Stage 7 readability
+      // pass: eased 0.35 -> 0.17 (mirrors ProceduralSky) so the event no
+      // longer flattens the whole gradient into warm white.
       col *= 0.80 + 0.42 * uMood + uEnergy * 0.14;
       col += uCloudLit * uPulse * 0.05;
-      col = mix(col, vec3(1.0, 0.94, 0.98), clamp(uEvent * 0.35, 0.0, 0.35));
+      col = mix(col, vec3(1.0, 0.94, 0.98), clamp(uEvent * 0.17, 0.0, 0.17));
 
       gl_FragColor = vec4(col, 1.0);
     }

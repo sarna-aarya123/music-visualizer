@@ -136,7 +136,11 @@ const SkyMaterial = shaderMaterial(
       // --- Music grade ---------------------------------------------------
       col *= uExposure * (0.80 + 0.42 * uMood + uEnergy * 0.14);
       col += uBandLit * uPulse * 0.05;
-      col = mix(col, vec3(1.0, 0.96, 0.98), clamp(uEvent * 0.32, 0.0, 0.32));
+      // Phase 6 Stage 7 readability pass: the sky's push toward white on a
+      // major event was a big part of the "whole frame washes out" — eased
+      // from 0.32 to 0.16 so it still brightens/warms noticeably but the
+      // gradient and bands stay legible behind the event.
+      col = mix(col, vec3(1.0, 0.96, 0.98), clamp(uEvent * 0.16, 0.0, 0.16));
 
       gl_FragColor = vec4(col, 1.0);
     }

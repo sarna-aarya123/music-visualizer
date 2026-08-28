@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createRng, type Rng } from '../../cyberpunkCity/world/seededRandom';
-import type { WorldBase } from '../../shared/environment';
+import type { CameraObstacle, WorldBase } from '../../shared/environment';
 import type { RouteData } from '../../cyberpunkCity/world/routeGenerator';
 
 /**
@@ -179,5 +179,23 @@ export function generateFloatingIslandsWorld(
 
   const landmarkPositions = pagodas.map((p) => new THREE.Vector3(p.x, p.y + 8, p.z));
 
-  return { islands, pagodas, trees, torii, landmarkPositions };
+  // Stage 7: coarse bounding spheres of the near islands' rock masses (and
+  // the pagodas standing on them) for CameraRig's cinematic-camera
+  // clearance pass — so a moving shot doesn't fly straight through an
+  // island or pagoda. Distant silhouette islands are omitted (far enough
+  // out that the camera never reaches them). Not collision — the walkway/
+  // corridor still governs the character exactly as before.
+  const cameraObstacles: CameraObstacle[] = [];
+  for (const isl of islands) {
+    if (!isl.isNear) continue;
+    cameraObstacles.push({
+      position: new THREE.Vector3(isl.x, isl.y - isl.depth * 0.4, isl.z),
+      radius: Math.min(isl.radius, 20),
+    });
+  }
+  for (const p of pagodas) {
+    cameraObstacles.push({ position: new THREE.Vector3(p.x, p.y + 4, p.z), radius: Math.min(4 * p.scale, 20) });
+  }
+
+  return { islands, pagodas, trees, torii, landmarkPositions, cameraObstacles };
 }

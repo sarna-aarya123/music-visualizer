@@ -239,7 +239,9 @@ function buildDesert(route: RouteData<string>, seed: number): BuiltWorld {
     const t = i / 90;
     const s = side(rng);
     const h = 2.5 + rng() * 5;
-    const p = flank(route, t, s, 2 + rng() * 12, h / 2, 0.6);
+    // Stage 7: ownRadius 0.6 -> 1.3 to cover the saguaro arms that extend
+    // ~0.7-1.1 sideways from the trunk centre.
+    const p = flank(route, t, s, 2 + rng() * 12, h / 2, 1.3);
     cacti.push(mat(p, [0, rng() * Math.PI, 0], [0.5, h, 0.5]));
     // Arms, so they read as saguaro rather than posts.
     if (rng() < 0.6) {
@@ -326,7 +328,11 @@ function buildAbyss(route: RouteData<string>, seed: number): BuiltWorld {
     const t = i / 110;
     const s = side(rng);
     const h = 8 + rng() * 20;
-    const p = flank(route, t, s, 3 + rng() * 14, h / 2);
+    // Stage 7: pass the column's own radius (~2.5) and a slightly larger
+    // base margin so the near face clears the corridor edge rather than
+    // sitting on it — a leaning column right at the path edge read as
+    // "the character clips it" even though centres never met.
+    const p = flank(route, t, s, 4 + rng() * 13, h / 2, 2.5);
     columns.push(mat(p, [rng() * 0.12 - 0.06, rng() * Math.PI, rng() * 0.12 - 0.06], [1.5 + rng(), h, 1.5 + rng()]));
     if (rng() < 0.4) {
       const bp = flank(route, t, s, 3 + rng() * 12, 0.6, 3.5);
@@ -337,7 +343,8 @@ function buildAbyss(route: RouteData<string>, seed: number): BuiltWorld {
     const t = i / 130;
     const s = side(rng);
     const h = 1.5 + rng() * 4;
-    const p = flank(route, t, s, 2 + rng() * 16, h / 2);
+    // Stage 7: account for the coral's own radius (h*0.5) in the clearance.
+    const p = flank(route, t, s, 3 + rng() * 15, h / 2, h * 0.5);
     coral.push(mat(p, [0, rng() * Math.PI, 0], [h * 0.5, h, h * 0.5]));
   }
 
@@ -415,7 +422,8 @@ function buildOuter(route: RouteData<string>, seed: number): BuiltWorld {
     const t = i / 80;
     const s = side(rng);
     const h = 3 + rng() * 12;
-    const p = flank(route, t, s, 3 + rng() * 22, rng() * 16 - 4);
+    // Stage 7: account for the shard's own radius (h*0.22) in the clearance.
+    const p = flank(route, t, s, 4 + rng() * 21, rng() * 16 - 4, h * 0.22);
     shards.push(mat(p, [rng() * 0.7 - 0.35, rng() * Math.PI, rng() * 0.7 - 0.35], [h * 0.22, h, h * 0.22]));
   }
   // Hero: vast tilted energy rings the path threads past.
@@ -504,7 +512,9 @@ function buildPs2(route: RouteData<string>, seed: number): BuiltWorld {
     const t = i / 90;
     const s = side(rng);
     const h = 4 + rng() * 5;
-    const p = flank(route, t, s, 2 + rng() * 4, h / 2, 2.8);
+    // Stage 7: ownRadius raised 2.8 -> 3.6 so the (wider) canopy above the
+    // trunk also clears the corridor edge, not just the trunk itself.
+    const p = flank(route, t, s, 2 + rng() * 4, h / 2, 3.6);
     trunks.push(mat(p, [0, 0, 0], [0.35, h, 0.35]));
     canopies.push(mat(new THREE.Vector3(p.x, p.y + h * 0.7, p.z), [rng(), rng() * 3, rng()], [2.6 + rng(), 2.4 + rng(), 2.6 + rng()]));
   }
@@ -601,7 +611,8 @@ function buildForest(route: RouteData<string>, seed: number): BuiltWorld {
     const t = i / 100;
     const s = side(rng);
     const h = 1 + rng() * 4;
-    const p = flank(route, t, s, 2 + rng() * 10, h * 0.4);
+    // Stage 7: account for the crystal's own radius (h*0.3) in the clearance.
+    const p = flank(route, t, s, 3 + rng() * 9, h * 0.4, h * 0.3);
     crystals.push(mat(p, [rng() * 0.4 - 0.2, rng() * Math.PI, rng() * 0.4 - 0.2], [h * 0.3, h, h * 0.3]));
   }
 
@@ -639,15 +650,22 @@ function buildVoid(route: RouteData<string>, seed: number): BuiltWorld {
   const rings: THREE.Matrix4[] = [];
   const landmarkPositions: THREE.Vector3[] = [];
 
+  // Parallel to `cyan`: the corridor-edge margin each cyan solid was
+  // placed at, so the SCATTER_REFORM event below can restrict itself to
+  // instances that are safely clear of the route (see cyanScatterIndices).
+  const cyanClearance: number[] = [];
   for (let i = 0; i < 210; i++) {
     const t = rng();
     const s = side(rng);
     const sz = 1 + rng() * 7;
-    const p = flank(route, t, s, 4 + rng() * 70, -25 + rng() * 60, sz);
+    const extra = 4 + rng() * 70;
+    const p = flank(route, t, s, extra, -25 + rng() * 60, sz);
     const m = mat(p, [rng() * 3, rng() * 3, rng() * 3], [sz, sz, sz]);
     const bucket = i % 3;
-    if (bucket === 0) cyan.push(m);
-    else if (bucket === 1) magenta.push(m);
+    if (bucket === 0) {
+      cyan.push(m);
+      cyanClearance.push(extra);
+    } else if (bucket === 1) magenta.push(m);
     else gold.push(m);
   }
   for (let i = 0; i < 10; i++) {
@@ -682,9 +700,19 @@ function buildVoid(route: RouteData<string>, seed: number): BuiltWorld {
   ];
   const ringIndices = rings.map((_, i) => i);
 
-  const cyanScatterIndices = cyan.map((_, i) => i).filter((i) => i < 24);
+  // Stage 7: a 14-unit scatter applied to cyan solids based as little as
+  // ~4 units past the corridor edge used to drag 8-unit octahedra straight
+  // through the character's path during `transform`. Now restricted to
+  // instances placed comfortably clear of the route, with the lateral
+  // reach pulled in and the drama moved into the vertical/spin — the
+  // "assemble out of chaos" reform beat reads the same, without anything
+  // crossing the corridor.
+  const cyanScatterIndices = cyan
+    .map((_, i) => i)
+    .filter((i) => cyanClearance[i] > 26)
+    .slice(0, 18);
   const cyanBindings: EventBinding[] = [
-    { phase: 'transform', archetype: 'SCATTER_REFORM', params: { scatterRadius: 14, scatterHeight: 8, scatterSpins: 1.5 } },
+    { phase: 'transform', archetype: 'SCATTER_REFORM', params: { scatterRadius: 10, scatterHeight: 12, scatterSpins: 1.5 } },
   ];
 
   const groups: PropGroup[] = [
@@ -842,6 +870,7 @@ export const WORLD_DEFINITIONS: WorldDefinition[] = [
     particles: { color: '#9fd8ff', count: 260, size: 0.09, motion: 0, spread: 60, height: 30, opacity: 0.35 },
     outline: { width: 0.16, color: '#08040f' },
     build: buildCyberpunk,
+    obstacleKeys: ['towers'],
   },
   {
     id: 'desertDreamWorld',
@@ -858,6 +887,7 @@ export const WORLD_DEFINITIONS: WorldDefinition[] = [
     particles: { color: '#ffe0b0', count: 200, size: 0.07, motion: 2, spread: 60, height: 20, opacity: 0.3 },
     outline: { width: 0.17, color: '#3a1020' },
     build: buildDesert,
+    obstacleKeys: ['pyramids', 'mesas'],
   },
   {
     id: 'underwaterAbyssWorld',
@@ -874,6 +904,7 @@ export const WORLD_DEFINITIONS: WorldDefinition[] = [
     particles: { color: '#d8f6ff', count: 240, size: 0.1, motion: 1, spread: 50, height: 34, opacity: 0.35 },
     outline: { width: 0.16, color: '#04162c' },
     build: buildAbyss,
+    obstacleKeys: ['whales', 'columns'],
   },
   {
     id: 'outerDimensionWorld',
@@ -890,6 +921,7 @@ export const WORLD_DEFINITIONS: WorldDefinition[] = [
     particles: { color: '#e0d0ff', count: 260, size: 0.08, motion: 2, spread: 70, height: 40, opacity: 0.4 },
     outline: { width: 0.15, color: '#0b0620' },
     build: buildOuter,
+    obstacleKeys: ['rings'],
   },
   {
     id: 'ps2NightWorld',
@@ -906,6 +938,7 @@ export const WORLD_DEFINITIONS: WorldDefinition[] = [
     particles: { color: '#ffe9a8', count: 150, size: 0.09, motion: 2, spread: 45, height: 14, opacity: 0.35 },
     outline: { width: 0.15, color: '#0a0a1c' },
     build: buildPs2,
+    obstacleKeys: ['houses', 'canopies'],
   },
   {
     id: 'fantasyForestWorld',
@@ -922,6 +955,7 @@ export const WORLD_DEFINITIONS: WorldDefinition[] = [
     particles: { color: '#eaffb0', count: 240, size: 0.09, motion: 2, spread: 55, height: 26, opacity: 0.4 },
     outline: { width: 0.16, color: '#0f2a1e' },
     build: buildForest,
+    obstacleKeys: ['caps', 'trunks', 'canopies'],
   },
   {
     id: 'abstractVoidWorld',
@@ -938,6 +972,9 @@ export const WORLD_DEFINITIONS: WorldDefinition[] = [
     particles: { color: '#ffffff', count: 300, size: 0.07, motion: 2, spread: 70, height: 40, opacity: 0.5 },
     outline: { width: 0.14, color: '#000000' },
     build: buildVoid,
+    // No obstacleKeys: Abstract Void's geometry is small scattered solids
+    // plus hollow rings the path is meant to thread straight through — a
+    // camera clipping one reads as intentional, not a bug.
   },
   {
     id: 'chaoticCarnivalWorld',
@@ -954,5 +991,6 @@ export const WORLD_DEFINITIONS: WorldDefinition[] = [
     particles: { color: '#ffb04a', count: 280, size: 0.1, motion: 1, spread: 55, height: 32, opacity: 0.45 },
     outline: { width: 0.16, color: '#1a0408' },
     build: buildCarnival,
+    obstacleKeys: ['wheels', 'tents'],
   },
 ];

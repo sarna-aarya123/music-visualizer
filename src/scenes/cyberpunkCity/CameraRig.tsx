@@ -48,6 +48,16 @@ const CHASE_LOOK_AHEAD = 3.2; // third-person look target: how far ahead of the 
 const CHASE_LOOK_HEIGHT = 0.9; // third-person look target: how far above the character
 const MODE_BLEND_RATE = 1.6; // per second — the third/first-person transition
 
+// Phase 6 Stage 7: cinematic-camera environment clearance (see the
+// clearance block in useFrame). Only active while a cinematicDirector cut
+// or the major-event sequence shot is actually pulling the camera off its
+// gameplay position — the plain chase camera stays inside the
+// guaranteed-clear corridor and is never touched by this.
+const CAMERA_CLEARANCE = 3.5; // margin added beyond an obstacle's own radius
+const MAX_CLEARANCE_PUSH = 16; // cap on the total per-frame correction, world units
+const MIN_GROUND_CLEARANCE = 2.5; // keep a cinematic shot above the local route surface
+const CLEARANCE_EASE_RATE = 6; // how fast the applied correction eases in/out (no snap)
+
 // Phase 6 Stage 3: the sequence's pre-drop hold now spans two phases
 // ('buildup' then 'tension') instead of the old single ~0.3s
 // 'anticipation' phase — combined so the FOV-tighten/pullback cue below
@@ -123,6 +133,11 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
   // two output vectors it writes into).
   const seqShotPos = useRef(new THREE.Vector3());
   const seqShotLook = useRef(new THREE.Vector3());
+  // Phase 6 Stage 7: environment-clearance correction for cinematic shots.
+  // `clearanceOffset` is the eased, currently-applied push; `clearanceTarget`
+  // is this frame's raw desired push. Both reused in place, never realloc'd.
+  const clearanceOffset = useRef(new THREE.Vector3());
+  const clearanceTarget = useRef(new THREE.Vector3());
 
   // Decaying impulses — each a distinct kind of movement, so a reaction
   // doesn't always look like "tilt sideways".
@@ -366,6 +381,50 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
       position = position.clone().lerp(seqShotPos.current, seqBlend);
       seqLook = seqShotLook.current;
     }
+
+    // --- Phase 6 Stage 7: cinematic-camera environment clearance. -------
+    // Runs only while a cinematicDirector cut or the sequence shot is
+    // actually influencing the camera (`cineBlend`/`seqBlend` > 0) — the
+    // plain gameplay chase camera lives in the corridor and is left
+    // exactly as it was. For each coarse obstacle sphere the composed
+    // camera position has ended up inside, push it radially out to the
+    // sphere surface (+ margin); accumulate across obstacles, clamp the
+    // total, keep it above the local route surface, then EASE the applied
+    // correction via a persistent offset so it fades in and out instead of
+    // the camera appearing to hit an invisible wall. A small deviation
+    // from the planned shot is acceptable; a shot flying through a
+    // building is not.
+    const clearanceActive = seqBlend > 0.001 || cineBlend > 0.001;
+    clearanceTarget.current.set(0, 0, 0);
+    if (clearanceActive && world.cameraObstacles && world.cameraObstacles.length > 0) {
+      for (const o of world.cameraObstacles) {
+        const dx = position.x - o.position.x;
+        const dy = position.y - o.position.y;
+        const dz = position.z - o.position.z;
+        const minD = o.radius + CAMERA_CLEARANCE;
+        const dSq = dx * dx + dy * dy + dz * dz;
+        if (dSq >= minD * minD) continue;
+        if (dSq > 1e-4) {
+          const d = Math.sqrt(dSq);
+          const scale = (minD - d) / d;
+          clearanceTarget.current.x += dx * scale;
+          clearanceTarget.current.y += dy * scale;
+          clearanceTarget.current.z += dz * scale;
+        } else {
+          // Camera is essentially at the obstacle centre — lift straight
+          // up, deterministically (no random direction).
+          clearanceTarget.current.y += minD;
+        }
+      }
+      const groundFloor = frame.position.y + MIN_GROUND_CLEARANCE;
+      const projectedY = position.y + clearanceTarget.current.y;
+      if (projectedY < groundFloor) clearanceTarget.current.y += groundFloor - projectedY;
+      const pushLen = clearanceTarget.current.length();
+      if (pushLen > MAX_CLEARANCE_PUSH) clearanceTarget.current.multiplyScalar(MAX_CLEARANCE_PUSH / pushLen);
+    }
+    clearanceOffset.current.lerp(clearanceTarget.current, 1 - Math.exp(-dt * CLEARANCE_EASE_RATE));
+    position.add(clearanceOffset.current);
+
     camera.position.copy(position);
 
     // --- Orientation: stable, world-up-referenced, never a Frenet frame.

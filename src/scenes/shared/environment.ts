@@ -13,11 +13,26 @@ import type { AudioFeatureFrame } from '../../audio/types';
  * `WorldLayout`) extends this structurally; no explicit `implements`
  * needed since TypeScript checks it by shape.
  */
+export interface CameraObstacle {
+  /** World-space centre of the mass. */
+  position: THREE.Vector3;
+  /** Coarse bounding-sphere radius (already clamped by the builder). */
+  radius: number;
+}
+
 export interface WorldBase {
   /** Every landmark's position, flattened into one list regardless of what
    *  kind of landmark it is — this is ALL the shared camera/cinematic
    *  system needs to know ("is there something worth framing nearby"). */
   landmarkPositions: THREE.Vector3[];
+  /** Phase 6 Stage 7: coarse bounding spheres of the world's big solid
+   *  props, for the cinematic camera's environment-clearance pass (see
+   *  `CameraRig`). Optional — a world that omits it contributes no camera
+   *  correction. NOT collision and NOT corridor-clearance: purely a
+   *  camera-only "don't sail a moving shot through that building" hint,
+   *  built from already-computed instance matrices (see
+   *  `shared/cameraObstacles.ts`). */
+  cameraObstacles?: CameraObstacle[];
 }
 
 /**
