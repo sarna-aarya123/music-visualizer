@@ -77,4 +77,11 @@ export interface WorldDefinition {
   particles?: ParticleConfig;
   outline: { width: number; color: string };
   build: (route: RouteData<string>, seed: number) => BuiltWorld;
+  /** Phase 6 Stage 7: which built prop-group keys are the world's big
+   *  solid masses that the cinematic camera should not fly through. Turned
+   *  into coarse bounding spheres (`shared/cameraObstacles.ts`) and handed
+   *  to `CameraRig`'s clearance pass via `WorldBase.cameraObstacles`. Omit
+   *  for worlds whose geometry is all small/scattered/hollow — they just
+   *  get no camera correction. */
+  obstacleKeys?: string[];
 }

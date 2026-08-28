@@ -13,11 +13,26 @@ import { getMajorEventEnvelope } from '../scenes/cyberpunkCity/world/musicEventD
  *  with the track" mapping), plus a reliable atmospheric pulse on every
  *  detected beat, consumed exactly once via the same beat-counter
  *  mechanism every other reactive system uses. A major event spikes bloom
- *  hard and briefly lifts the vignette for a screen-flash feel.
+ *  and briefly lifts the vignette for a dramatic surge.
  *  Typed loosely (`any`) because @react-three/postprocessing's ref type
  *  for effect components doesn't line up with the underlying effect
  *  instance across versions — the instance itself does expose these
- *  properties at runtime, which is all we need here. */
+ *  properties at runtime, which is all we need here.
+ *
+ *  Phase 6 Stage 7 — readability pass. The major-event response used to
+ *  stack a very large additive bloom term (`env * 4.5`), a near-total
+ *  vignette lift (down to 0.15), and heavy chromatic aberration on top of
+ *  the emissive/rim/sky-white-mix boosts every other system applies from
+ *  the SAME envelope — the combined result blew the whole frame out to
+ *  white so nothing was readable. Rebalanced here (and in WorldScene /
+ *  Islands / ProceduralSky / IslandSky / WorldPath / WorldParticles) so a
+ *  drop still reads as a powerful visual surge but the environment,
+ *  character, landmarks and cel-shaded value separation all stay visible:
+ *   - bloom's event term cut ~60% and the total hard-clamped
+ *   - bloom's luminanceThreshold RISES during an event, so only genuine
+ *     highlights bloom and mid-tones stop smearing
+ *   - the vignette keeps a real frame (floor 0.45, was 0.15)
+ *   - chromatic aberration eased back for legibility */
 function PostFX() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bloomRef = useRef<any>(null);
@@ -37,13 +52,22 @@ function PostFX() {
     const majorEnvelope = getMajorEventEnvelope();
 
     if (bloomRef.current) {
-      bloomRef.current.intensity = 0.5 + featureFrame.energy * 1.6 + pulse.current * 0.9 + majorEnvelope * 4.5;
+      // Event term cut from *4.5 to *1.7 and the whole thing clamped, so a
+      // drop lifts bloom to roughly 1.5x the loud-section level rather than
+      // ~3x it. Raising luminanceThreshold alongside it means the extra
+      // bloom lands only on true highlights — mid-tones (the readable part
+      // of the scene) stop blooming as the event peaks.
+      const raw = 0.5 + featureFrame.energy * 1.3 + pulse.current * 0.7 + majorEnvelope * 1.7;
+      bloomRef.current.intensity = Math.min(raw, 3.1);
+      bloomRef.current.luminanceThreshold = 0.22 + majorEnvelope * 0.16;
     }
     if (vignetteRef.current) {
-      vignetteRef.current.darkness = Math.max(0.15, 0.9 - majorEnvelope * 0.85);
+      // Floor raised 0.15 -> 0.45: the frame always keeps a visible edge
+      // darkening, so a major event can't open the whole image up to white.
+      vignetteRef.current.darkness = Math.max(0.45, 0.9 - majorEnvelope * 0.4);
     }
     if (chromaticRef.current) {
-      const shift = majorEnvelope * 0.006;
+      const shift = majorEnvelope * 0.0038;
       chromaticRef.current.offset.set(shift, shift * 0.6);
     }
   });

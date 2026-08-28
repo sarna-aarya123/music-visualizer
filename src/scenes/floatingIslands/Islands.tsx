@@ -284,14 +284,22 @@ export function Islands({
 
     // Lantern glow and blossom brightness ride the music; the rim light
     // strengthens with a major event so every silhouette flares.
-    materials.body.uniforms.uEmissive.value =
-      0.4 + featureFrame.sectionMood * 0.35 + featureFrame.energy * 0.25 + env * 1.2;
-    materials.canopy.uniforms.uEmissive.value =
-      0.08 + rhythmState.drumPresence * 0.22 + featureFrame.sectionMood * 0.15 + env * 0.5;
+    // Phase 6 Stage 7 readability pass (mirrors WorldScene): the event
+    // term on both emissives is cut ~50% and clamped, and the major-event
+    // rim boost halved (`1 + env*1.1` -> `1 + env*0.5`), so a drop still
+    // makes the pagodas glow hard without the whole world clipping white.
+    materials.body.uniforms.uEmissive.value = Math.min(
+      0.4 + featureFrame.sectionMood * 0.35 + featureFrame.energy * 0.25 + env * 0.6,
+      1.7
+    );
+    materials.canopy.uniforms.uEmissive.value = Math.min(
+      0.08 + rhythmState.drumPresence * 0.22 + featureFrame.sectionMood * 0.15 + env * 0.28,
+      1.2
+    );
 
     for (const m of Object.values(materials)) {
       (m.uniforms.uCameraPos.value as THREE.Vector3).copy(cam);
-      m.uniforms.uRimStrength.value = (m.userData.baseRim as number) * (1 + env * 1.1);
+      m.uniforms.uRimStrength.value = (m.userData.baseRim as number) * (1 + env * 0.5);
     }
 
     // Signature event: pagodas rise during a major sequence — see

@@ -1,13 +1,16 @@
 # PLAN — Next Phase: Spectacle, Events & the World Director
 
-> **Status (2026-08-28): Stages 0-6 are complete, verified, and committed**
+> **Status (2026-08-28): Stages 0-7 are complete, verified, and committed**
 > — dynamic instance-matrix plumbing, the `WorldDirector` facade, the
 > ~13s multi-phase major-event sequence, moving cinematic camera shots,
-> per-world signature events, and (Stage 6) a fix for the camera's
-> environment-over-character bias — the character is now the default
-> cinematic anchor, with landmark-focus reserved mainly for `reveal`. See
-> §10 for the full diagnosis/brief and what was actually changed. **Stage
-> 7 (character abilities) is next and has NOT been approved or started.**
+> per-world signature events, (Stage 6) the character-first cinematic-anchor
+> fix, and (Stage 7) an effect-brightness readability rebalance, a
+> cinematic-camera environment-clearance pass, a character/prop
+> intersection fix, and the planned launch/glide/landing-shockwave
+> character ability. See §10 for the Stage 6 diagnosis/brief and §11 for
+> the Stage 7 write-up. **Stage 8 (variety / history / weighted selection,
+> plus the deferred background/distant event layer) is next and has NOT
+> been approved or started.**
 >
 > **Read `HANDOFF.md` first** for current architecture, conventions,
 > protected systems and known pitfalls.
@@ -653,8 +656,52 @@ diagnosis, and exactly what was changed to fix it — two files
 (`cameraShots.ts`, `cinematicDirector.ts`), no new camera system, no
 rewrite.
 
-**Stage 7 — Character abilities** (launch / glide / landing shockwave),
-triggered by the director.
+**Stage 7 — DONE (2026-08-28). Readability + spatial-collision polish +
+the planned character ability.** Three user-specified fixes plus the
+planned launch/glide/landing-shockwave ability. Full write-up in §11.
+Summary:
+- **Effect-brightness rebalance** — every system that reads the
+  major-event envelope (`getMajorEventEnvelope()`) was stacking its own
+  large boost off the same curve (bloom `env*4.5` additive, vignette lift
+  to 0.15, chromatic aberration, prop emissive up to ~2.6x additive, rim
+  2.1x, sky white-mix ~0.33, path/particle bursts), so a drop blew the
+  frame to white. Each contributor bounded/clamped, nothing removed —
+  bloom event term cut to `*1.7` + hard clamp + a rising
+  `luminanceThreshold` (only true highlights bloom at peak), vignette
+  floor `0.45`, emissive event term + total both clamped, rim event boost
+  halved, sky white-mix `~0.16`, path ripple / particle burst eased back.
+  7 files, all render-side, zero audio/route/director touches.
+- **Cinematic-camera environment clearance** — `shared/cameraObstacles.ts`
+  turns a world's own large prop-group matrices into coarse bounding
+  spheres (`WorldDefinition.obstacleKeys`; Floating Islands builds its own
+  from near islands + pagodas), surfaced on `WorldBase.cameraObstacles`.
+  `CameraRig` runs a clearance pass **only while a cinematicDirector cut
+  or the sequence shot is influencing the camera**: push the composed
+  position out of any sphere it's inside, accumulate, clamp the total
+  (`MAX_CLEARANCE_PUSH` 16), keep it above the local route surface, then
+  ease the whole correction through a persistent offset so it fades in/out
+  with no "invisible wall" snap. Gameplay chase camera, route generation,
+  corridor-clearance math: all untouched.
+- **Character/prop intersection** — diagnosis: the character rigidly
+  follows the route centreline and never deviates, so it can only visibly
+  clip something placed at/near the centreline or moved there by an
+  event. Six `flank()` call sites (abyss columns/coral, outer shards,
+  forest crystals, PS2 trunk-canopies, desert cacti) passed `ownRadius`
+  0/too-small for the prop's true size, leaving near faces on the corridor
+  edge — each given its real radius + a slightly larger base margin.
+  Abstract Void's `SCATTER_REFORM` (`scatterRadius: 14` on cyan solids
+  based as little as 4 units past the corridor edge) was the one genuine
+  event-driven intrusion — now restricted to comfortably-clear instances,
+  reach pulled to 10, drama shifted vertical. `routeGenerator.ts` +
+  clearance math: zero diff.
+- **Character ability** — the planned launch → glide → landing shockwave,
+  built entirely on the existing major-event jump lifecycle in
+  `Character.tsx` (no new system, no new director). A `'glide'` jump phase
+  — ~0.6s near-weightless apex hang with an arms-wide / legs-trailing /
+  forward-pitch pose — fires only on the strongest (drop-caused, ≥0.82)
+  major events; the landing `groundImpact` shockwave now scales with the
+  launch intensity. Everything from `JUMP_INTENSITY_BAR`..0.82 keeps the
+  plain launch+land, unchanged.
 
 **Stage 8 — Variety, history, weighted selection, replayability**, plus
 the original Stage 6 background/distant event layer (deferred here).
@@ -1135,3 +1182,233 @@ gameplay camera and first-person mode both unaffected.
 system check, remove any temp/debug code, commit ALL intended changes,
 `git status` clean, report commit hash + ahead-of-origin count, do not push
 unless explicitly asked, stop after Stage 6 for review before Stage 7.
+
+---
+
+## 11. Stage 7 — Readability + spatial-collision polish + character ability — DONE (2026-08-28)
+
+Four changes, in the priority order the user set (route reliability >
+character movement > cinematic intent > no visual intersections > smooth
+correction). No protected system was modified: `FeatureExtractor`,
+`beatConsumer`, the audio-context clock, `routeGenerator.ts`,
+corridor-clearance math, Phase 5 speed tuning (`musicController.ts`
+constants), `musicEventDirector.ts` trigger conditions, and the
+hi-hat/snare camera exclusion are all **zero diff** (`git diff
+--name-only` confirms none of those files are in the changeset;
+`worldEvents.ts` has a doc-comment-only diff).
+
+### 11.1 Effect-brightness readability rebalance
+
+**Diagnosis (found in code).** Every reactive system reads the same
+`getMajorEventEnvelope()` 0..1 curve and applies its OWN large boost off
+it, independently, with no shared budget:
+
+| System | Pre-Stage-7 major-event term |
+|---|---|
+| `VisualizerCanvas` bloom | `+ env * 4.5` additive on top of `0.5 + energy*1.6 + pulse*0.9` — a ~14x jump over the 0.5 base |
+| `VisualizerCanvas` vignette | `darkness` down to `0.15` (near-total removal of the frame) |
+| `VisualizerCanvas` chromatic | offset up to `0.006` |
+| `WorldScene` prop emissive | `+ (reactive.event) * env`, weights up to **2.6** — `col += uColor * uEmissive` makes the prop 3.6x its own colour, pure additive |
+| `WorldScene` prop rim | `baseRim * (1 + env*1.1)` — 2.1x, and rim is a near-white additive edge term (art-direction point 4: at full strength it "blows everything out to white") |
+| `ProceduralSky` / `IslandSky` | `mix(col, white, env*0.32..0.35)` |
+| `WorldPath` ripple | `impactStrength = 3.2 + major*2.2`, then `* 1.6` in-shader |
+| `WorldParticles` burst | `2.2 + major*2`, feeding size + opacity boosts |
+
+Combined at a drop (`env ≈ 0.85-1.0`) the frame clipped to white and the
+cel-shaded value separation, character, environment and landmarks all
+disappeared.
+
+**Fix — a controlled reduction, nothing removed.** Every contributor was
+bounded so a drop still reads as a powerful surge but the scene stays
+readable:
+
+- **Bloom:** event term `*4.5 → *1.7`, base terms trimmed
+  (`energy*1.6→*1.3`, `pulse*0.9→*0.7`), whole value hard-clamped to
+  `3.1`. **`luminanceThreshold` now RISES with the envelope**
+  (`0.22 + env*0.16`) — the single most useful lever: at peak, only genuine
+  highlights bloom, mid-tones (the readable part) stop smearing.
+- **Vignette:** floor `0.15 → 0.45` — the frame always keeps a visible
+  edge darkening; a major event can't open the whole image to white.
+- **Chromatic aberration:** `env*0.006 → env*0.0038` for legibility.
+- **Prop emissive (`WorldScene`):** the event contribution is clamped to
+  `1.1` (a "prop ignites" moment still clearly reads) and the summed
+  emissive clamped to `1.7`.
+- **Prop rim (`WorldScene`):** event boost `1 + env*1.1 → 1 + env*0.5`.
+- **`Islands.tsx`** (bespoke world, same pattern): body emissive event
+  term `env*1.2 → env*0.6` (clamp 1.7), canopy `env*0.5 → env*0.28`
+  (clamp 1.2), rim `1 + env*1.1 → 1 + env*0.5`.
+- **Sky:** `ProceduralSky` white-mix `0.32 → 0.16`, `IslandSky`
+  `0.35 → 0.17`.
+- **`WorldPath`** major ripple `3.2 + major*2.2 → 2.0 + major*1.3`.
+- **`WorldParticles`** major burst `2.2 + major*2 → 1.3 + major*1.1`.
+
+Beat-level and mood/drums reactivity are all untouched — only the
+major-event stack was rebalanced.
+
+### 11.2 Cinematic-camera environment clearance
+
+**Approach.** The corridor tube around the route is the guaranteed-clear
+volume and must not be touched (protected). Cinematic shots deliberately
+leave it (46+ units laterally to frame a landmark), which is where they
+can clip props. Rather than a full obstacle system or constraining the
+shots, Stage 7 adds a **camera-only soft-avoidance pass** driven by coarse
+data each world already produces:
+
+- `shared/cameraObstacles.ts` — `obstaclesFromMatrices()` decodes a
+  group's instance matrices into `{position, radius}` bounding spheres
+  (`radius = clamp(0.5*maxHorizontalScale + 0.15*heightScale, min, 20)`;
+  the 20-unit cap stops one colossal prop from becoming an avoidance field
+  that shoves the camera out of every shot meant to frame it).
+  `collectObstacles(groups, keys)` gathers several named groups at once.
+- `WorldDefinition.obstacleKeys` (new, optional) names each world's big
+  solid groups: Cyberpunk `towers`; Desert `pyramids`+`mesas`; Abyss
+  `whales`+`columns`; Outer `rings`; PS2 `houses`+`canopies`; Forest
+  `caps`+`trunks`+`canopies`; Carnival `wheels`+`tents`. **Abstract Void
+  deliberately declares none** — its geometry is small scattered solids
+  plus hollow rings the path threads through on purpose.
+- `WorldScene` builds the list once (in the `world` memo) and passes it on
+  `WorldBase.cameraObstacles`. Floating Islands' `worldGenerator.ts`
+  builds its own from near islands (rock masses) + pagodas.
+- `CameraRig` — a new block right before `camera.position.copy(position)`,
+  gated on `cineBlend > 0.001 || seqBlend > 0.001` (**the plain gameplay
+  chase camera never enters this path**). For each sphere the composed
+  position is inside, it accumulates a radial push to the sphere surface +
+  `CAMERA_CLEARANCE` (3.5) margin; clamps the total to `MAX_CLEARANCE_PUSH`
+  (16); adds a floor so a shot can't drop below `frame.position.y +
+  MIN_GROUND_CLEARANCE` (2.5); then **eases the applied correction through
+  a persistent `clearanceOffset` ref** (`1 - exp(-dt*6)`) so it fades in
+  and out — no snap, no "invisible wall". Zero per-frame allocation (two
+  reused `Vector3` refs, scalar math per obstacle). When no shot is
+  active the target is zero and the offset eases back to zero on its own.
+
+A small deviation from the planned trajectory is accepted; a shot flying
+through a building is not — matching the brief's explicit trade-off.
+
+### 11.3 Character/prop intersection
+
+**Diagnosis.** `characterMotionState.position` is set to the exact route
+frame position every frame by `CameraRig`; `Character.tsx` renders at that
+point with no lateral offset and no collision logic. So the character can
+only *visibly* pass through something that is (a) placed at/near the route
+centreline, or (b) moved there by an event. `flank()` places every static
+prop at `corridorRadius + ownRadius + extra` from the centreline, and
+`corridorRadius` (≥4.5) alone already clears a ~0.3-wide runner — **so no
+correctly-placed static prop can actually intersect the character.** Two
+real gaps:
+
+1. **`ownRadius` omitted / too small** at six `flank()` call sites, so a
+   prop's *near face* landed on or just inside the corridor edge — a
+   leaning column / crystal / shard right at the visible path edge reads
+   as "the character clipped it" in the foreshortened third-person view
+   even though centres never met. Fixed by passing each prop's real
+   radius and bumping the base margin: abyss `columns` (`+2.5`), abyss
+   `coral` (`+h*0.5`), outer `shards` (`+h*0.22`), forest `crystals`
+   (`+h*0.3`), PS2 trunk-`canopies` (trunk ownRadius `2.8 → 3.6` to cover
+   the wider canopy above it), desert `cacti` (`0.6 → 1.3` for the
+   saguaro arms). RNG call order/count in each expression is unchanged, so
+   world geometry stays deterministic.
+
+2. **Abstract Void `SCATTER_REFORM`** — the one genuine event-driven
+   intrusion. `scatterRadius: 14` on cyan solids whose base clearance is
+   `4 + rng()*70` dragged 8-unit octahedra straight across the corridor
+   during `transform`. Fixed in the binding data (not the shared
+   evaluator): `buildVoid` now records each cyan solid's placement margin,
+   and `cyanScatterIndices` is filtered to instances placed `> 26` units
+   clear of the corridor (then capped at 18 for focus); `scatterRadius`
+   pulled `14 → 10` with the drama moved into `scatterHeight`/spin. The
+   "assemble out of chaos" beat reads the same; nothing crosses the
+   corridor. `worldEvents.ts`'s `scatterReform` doc now states the
+   constraint for future binding authors (it has no route data to clamp
+   against itself).
+
+Floating Islands' near islands intentionally poke a few units inside the
+corridor radius but sit *below* the walkway ("run over/past islands") —
+left as-is per the brief's "intentionally decorative/non-solid" allowance.
+
+### 11.4 Character ability — launch / glide / landing shockwave
+
+Built entirely on the existing major-event jump lifecycle in
+`Character.tsx` (`anticipation → air → land`, already gated on
+`majorEventState` — the director). No new system, no new state singleton,
+no `resetToken` hook needed (same as the existing jump: `Character` is
+keyed by `trackGeneration` so it remounts on a new track; a seek
+mid-jump resolves naturally as before).
+
+- **Launch:** unchanged trigger (`majorHit > JUMP_INTENSITY_BAR`), but
+  the launch velocity is now `8.4` (was `7.2`) for glide-eligible events
+  so the arc is visibly bigger.
+- **Glide:** a new `'glide'` `JumpPhase`, entered once at the apex
+  (`jumpVelY <= 0`) **only if the triggering event was strong**
+  (`jumpIntensity > GLIDE_INTENSITY_BAR = 0.82` — drop-caused events score
+  ~0.85+). Near-weightless (`GLIDE_GRAVITY 4` vs `GRAVITY 20`) for
+  `GLIDE_DURATION 0.6s`, then normal gravity resumes for the descent. A
+  `hasGlided` one-shot guard prevents re-entry. Pose: an eased
+  `glideBlend` opens the arms wider (`airSpread + glide*0.5`), lets the
+  legs trail (`airTuck * (1 - glide*0.6)`), and adds a forward torso
+  pitch (`+ glide*0.28`) — a recognisable glide silhouette, eased in/out
+  so it never pops.
+- **Landing shockwave:** the existing `triggerGroundImpact` at touchdown
+  now scales with the launch: `LANDING_SHOCKWAVE_BASE (2.6) +
+  jumpIntensity * LANDING_SHOCKWAVE_SCALE (2.4)` — a full drop-launch
+  lands noticeably harder. `WorldPath` and `WorldParticles` already
+  consume `groundImpactState`, so the harder shockwave propagates for
+  free.
+
+Events between `JUMP_INTENSITY_BAR` and `0.82` still get the plain
+launch + land exactly as before — the glide is reserved for the biggest
+moments so it stays special.
+
+### 11.5 Verification
+
+- **`npx tsc -b` clean. `npm run build` clean** (738 modules, no errors).
+- **All 9 worlds cycled** via the environment switcher (11 switches,
+  exercising every world's mount + unmount/dispose path with the new
+  `cameraObstacles` collection and the rebalanced emissive loop) — **zero
+  console errors, zero window errors**.
+- **Full synthetic-track playthrough** (12s WAV: 3s quiet → 5s loud
+  bass-heavy drop with kick pulses → 4s breakdown, injected via a
+  simulated `DragEvent` on `.upload-panel`) played to its **natural end
+  and auto-reset to 0:00** — zero console errors / window errors /
+  unhandled rejections across the drop and breakdown regions (where the
+  major-event sequence, emissive clamps, camera-clearance pass and glide
+  state machine all execute).
+- **Restart, mid-track seek (via the transport range input), and
+  world-switch while a track was loaded and playing** — all zero errors;
+  the `resetToken → WorldDirector.reset()` and remount paths ran clean.
+- **NOT visually verified.** The in-tool browser preview pane never
+  composited frames this session — `document.hidden` was `true` on the
+  tab throughout (the known, pre-existing limitation documented in
+  `HANDOFF.md` §2 and every prior stage's write-up), which also throttles
+  the `useFrame` loop so a sequence can't be watched progress in real
+  time. So the actual *look* of the rebalanced brightness, the camera
+  clearance corrections, the tightened prop placement, and the glide pose
+  have **not** been seen — only proven to build, type-check, mount/unmount
+  cleanly, and run a full track error-free. A screenshot pass from the
+  user (or a future session where the preview composites) is needed to
+  confirm: (1) major effects still read as dramatic but no longer blind;
+  (2) environment/character/landmark readability during a drop; (3) cel
+  value separation preserved; (4) the cinematic camera no longer clips
+  towers/trees/pyramids/wheels and its corrections look smooth; (5) the
+  character no longer visibly passes through clearly-solid props in any
+  world; (6) the glide reads as a glide.
+
+### 11.6 Known limitations / follow-ups
+
+- **Camera obstacle spheres are coarse.** A single bounding sphere
+  under-covers tall thin props (a tower is a sphere at its mid-height, not
+  a capsule) and over-covers wide ones (capped at radius 20). It's tuned
+  to catch the jarring "shot flies through the building" case, not to be
+  geometrically exact. A vertical-capsule model would be the natural
+  upgrade if a specific clip is ever reported.
+- **`scatterReform` still has no route awareness.** The corridor-clearance
+  constraint on `SCATTER_REFORM` bindings lives in the binding author's
+  index selection (documented in `worldEvents.ts`), not enforced in code.
+  Fine for the one binding that uses it; revisit if more are added.
+- **Glide only spot-checked structurally** (state machine + build + error-
+  free playthrough), not watched. If the ~0.6s hang feels too long/short
+  or the pose too subtle, `GLIDE_DURATION` / `glide*` pose weights are the
+  knobs.
+- **Per-world visual pass outstanding** for the brightness rebalance —
+  the clamp values (emissive 1.1/1.7, bloom 3.1, etc.) are a first
+  calibration; some worlds lean harder on emissive than others and may
+  want per-world tuning once seen.

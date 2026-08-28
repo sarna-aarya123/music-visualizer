@@ -10,6 +10,7 @@ import { getMajorEventEnvelope } from '../cyberpunkCity/world/musicEventDirector
 import { rhythmState } from '../cyberpunkCity/world/rhythmState';
 import { ProceduralSky } from '../shared/ProceduralSky';
 import { OutlinedInstances } from '../shared/OutlinedInstances';
+import { collectObstacles } from '../shared/cameraObstacles';
 import { makeToon, makeOutline } from '../shared/toon';
 import { WorldPath } from './WorldPath';
 import { WorldParticles } from './WorldParticles';
@@ -55,6 +56,17 @@ export function WorldScene({
   );
 
   // Music-reactive emissive per prop group — lantern glow, neon, fire.
+  //
+  // Phase 6 Stage 7 readability pass: the per-group `event` weights in the
+  // world data run as high as ~2.6, and `col += uColor * uEmissive` is a
+  // straight additive term — an emissive of 2.6 pushes a prop to ~3.6x its
+  // own colour and clips to white during a drop. The event contribution is
+  // now clamped (so a "prop ignites" moment still clearly reads, up to
+  // ~1.1 additive, but can't nuke the value structure), the summed
+  // emissive is clamped too, and the major-event rim boost is halved
+  // (`1 + env*1.1` -> `1 + env*0.5`): rim at 2.1x base blew every
+  // silhouette edge to white, exactly the failure mode art-direction
+  // point 4 warns about. Nothing here is removed — only bounded.
   useFrame(() => {
     const env = getMajorEventEnvelope();
     for (const g of built.groups) {
@@ -62,18 +74,27 @@ export function WorldScene({
       const m = materials[g.key];
       if (!m) continue;
       const base = (m.userData.baseEmissive as number) ?? 0;
-      m.uniforms.uEmissive.value =
+      const eventEmissive = Math.min((g.reactive.event ?? 0) * env, 1.1);
+      m.uniforms.uEmissive.value = Math.min(
         base +
-        (g.reactive.mood ?? 0) * featureFrame.sectionMood +
-        (g.reactive.drums ?? 0) * rhythmState.drumPresence +
-        (g.reactive.event ?? 0) * env;
-      m.uniforms.uRimStrength.value = ((m.userData.baseRim as number) ?? 0.5) * (1 + env * 1.1);
+          (g.reactive.mood ?? 0) * featureFrame.sectionMood +
+          (g.reactive.drums ?? 0) * rhythmState.drumPresence +
+          eventEmissive,
+        1.7
+      );
+      m.uniforms.uRimStrength.value = ((m.userData.baseRim as number) ?? 0.5) * (1 + env * 0.5);
     }
   });
 
   const world = useMemo(
-    () => ({ landmarkPositions: built.landmarkPositions }),
-    [built]
+    () => ({
+      landmarkPositions: built.landmarkPositions,
+      // Stage 7: coarse bounding spheres of this world's big solid props,
+      // for CameraRig's cinematic-camera clearance pass. Undefined for
+      // worlds that declare no obstacleKeys.
+      cameraObstacles: def.obstacleKeys ? collectObstacles(built.groups, def.obstacleKeys) : undefined,
+    }),
+    [built, def.obstacleKeys]
   );
 
   return (

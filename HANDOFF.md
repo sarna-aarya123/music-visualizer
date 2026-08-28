@@ -18,13 +18,15 @@ direction, matching a reference concept-art sheet (`public/reference.png`).
 
 **Status:** feature-complete and visually signed off by the user. The next
 phase — **Phase 6: Spectacle, Events & the World Director** — is under way;
-see `PLAN.md`. Stages 0-6 are done (dynamic instance-matrix plumbing, a
+see `PLAN.md`. Stages 0-7 are done (dynamic instance-matrix plumbing, a
 `WorldDirector` facade, a real 10-15s multi-phase major-event sequence
 replacing the old ~2.57s flash, moving camera shots for that sequence,
-every one of the 9 worlds having its own signature event, and — Stage 6 —
-a fix so those cinematic camera shots default to the character as the
-visual anchor instead of losing them to the environment). Stage 7 onward
-(character abilities, background/distant events, anything requiring
+every one of the 9 worlds having its own signature event, Stage 6's
+character-first cinematic-anchor fix, and — Stage 7 — an effect-brightness
+readability rebalance, a cinematic-camera environment-clearance pass, a
+character/prop intersection fix, and the planned launch/glide/landing-
+shockwave character ability). Stage 8 onward (variety/history/weighted
+selection, the deferred background/distant events, anything requiring
 genuinely new geometry) has **not** started and needs approval before
 work resumes.
 
@@ -156,7 +158,8 @@ The folder name is a leftover misnomer. It contains no world any more:
 | `world/worldDirector.ts` | The `WorldDirector` facade — `step()`/`reset()` advance/clear the major-event sequence; `sequence`/`phaseDurations` getters expose its raw phase/timing; `getSequenceCameraShot(...)` is the camera-shot decision (Stage 4), delegated to `cameraShots.ts`. |
 | `world/musicEventDirector.ts` | Rare major events: a real 6-phase (buildup/tension/drop/transform/reveal/aftermath), ≈13s sequence — intensity, origin, exactly-once `impactEventId`, continuous envelope. Driven only via `worldDirector.ts`. |
 | `world/cameraShots.ts` | Stage 4: three pure, zero-allocation camera-path primitives (`push`/`orbit`/`sweep`) + the phase→shot table for the major-event sequence, plus the per-sequence locked-target logic. Stage 6: each `ShotSpec` blends both position (`pivotWeight`) and look-at (`lookWeight`) independently between the character's current position and the locked landmark — character-anchored by default, landmark-heavy only for `reveal`. No rendering — `CameraRig` applies what this computes. |
-| `world/worldEvents.ts` | Stage 5: the "world event executor" — four pure, zero-allocation per-instance transform functions (`riseLike`/`spinUp`/`scatterReform`, ten archetype names mapped onto them) plus `createSignatureEventAnimated(...)`, which each world's `build()` calls to turn a `PropGroup` into one whose flagged instances play out that world's own `EventBinding[]` data across the sequence's phases. No rendering — only `OutlinedInstances` (via the returned `AnimatedInstances`) and `floatingIslands/Islands.tsx`'s own hand-rolled update ever call `setMatrixAt`. |
+| `world/worldEvents.ts` | Stage 5: the "world event executor" — four pure, zero-allocation per-instance transform functions (`riseLike`/`spinUp`/`scatterReform`, ten archetype names mapped onto them) plus `createSignatureEventAnimated(...)`, which each world's `build()` calls to turn a `PropGroup` into one whose flagged instances play out that world's own `EventBinding[]` data across the sequence's phases. No rendering — only `OutlinedInstances` (via the returned `AnimatedInstances`) and `floatingIslands/Islands.tsx`'s own hand-rolled update ever call `setMatrixAt`. Stage 7: `scatterReform` (the one evaluator that moves instances *laterally*) now documents that a binding's `scatterRadius` must stay within the participating instances' own route clearance — enforced by binding-author index selection, since this file has no route data. |
+| `shared/cameraObstacles.ts` | Stage 7: derives coarse bounding spheres from a world's already-computed instance matrices (`obstaclesFromMatrices` / `collectObstacles`), fed to `WorldBase.cameraObstacles` and consumed by `CameraRig`'s cinematic-camera clearance pass. NOT collision, NOT corridor-clearance — a camera-only "don't sail a moving shot through that building" hint. |
 | `world/rhythmState.ts` | `drumPresence`, `energyTrend`. |
 | `world/cinematicDirector.ts` | Shot types, selection priority, blend envelope, shot transforms. |
 | `world/{camera,character}MotionState.ts`, `groundImpactState.ts` | Cross-system singletons. |
@@ -361,6 +364,41 @@ state (2026-08-28): Stages 0-6 done and committed —
   events were only confirmed via code review + the shared evaluator
   functions already being visually confirmed elsewhere, not their own
   screenshots).
+- **Stage 7:** three targeted fixes plus the planned character ability.
+  (1) **Effect-brightness readability rebalance** — the major-event
+  envelope stacked a huge additive bloom term (`env*4.5`), a near-total
+  vignette lift (to 0.15), heavy chromatic aberration, ~2.6x additive prop
+  emissive, 2.1x rim, a 32-35% sky-white-mix, and bright path/particle
+  bursts, all off the SAME curve, so a drop whited out the frame. Every
+  contributor was bounded/clamped (not removed): bloom event term
+  `*4.5→*1.7` + hard clamp + a rising `luminanceThreshold` so only true
+  highlights bloom at peak; vignette floor `0.15→0.45`; emissive event
+  contribution and total both clamped; rim event boost halved;
+  sky-white-mix `~0.33→~0.16`; path ripple and particle burst eased back.
+  (2) **Cinematic-camera environment clearance** — new
+  `shared/cameraObstacles.ts` derives coarse bounding spheres from each
+  world's own large prop groups (`WorldDefinition.obstacleKeys`; Floating
+  Islands builds its own), surfaced on `WorldBase.cameraObstacles`.
+  `CameraRig` pushes the camera out of any sphere it enters **only while a
+  cinematicDirector cut or the sequence shot is active**, clamps + eases
+  the correction so it never snaps, and keeps a shot above the local route
+  surface. The gameplay chase camera, route generation, and
+  corridor-clearance math are all untouched. (3) **Character/prop
+  intersection** — the character rigidly follows the route centreline, so
+  six `flank()` call sites passing `ownRadius` 0/too-small (abyss
+  columns/coral, outer shards, forest crystals, PS2 trunk-canopies,
+  desert cacti) got their real radius + a larger base margin, and
+  Abstract Void's `SCATTER_REFORM` (a 14-unit lateral scatter on cyan
+  solids based ~4 units past the corridor) was restricted to
+  comfortably-clear instances with the reach pulled to 10.
+  `routeGenerator.ts` and collision/clearance math: zero diff. (4)
+  **Character ability** — the planned launch → glide → landing shockwave,
+  built on the existing major-event jump lifecycle (`Character.tsx`, no
+  new system): a new `'glide'` phase (~0.6s near-weightless apex hang,
+  arms-wide/forward-pitch pose) on the strongest (drop-caused, ≥0.82)
+  events, with the landing `groundImpact` shockwave now scaled by launch
+  intensity. See `PLAN.md` §11 for the full write-up and verification.
+
 - **Stage 6:** fixed the cinematic camera's environment-over-character
   bias — redefined by the user from the original "background/distant
   event layer" plan (deferred, folded into Stage 8/9) after watching
@@ -377,6 +415,7 @@ state (2026-08-28): Stages 0-6 done and committed —
   of `'landmark'`. See `PLAN.md` §10 for the full diagnosis, exact
   per-phase weights, and verification results.
 
-Nothing beyond Stage 6 (character abilities, Stage A pre-analysis, the
-deferred background/distant event layer) is started or approved. **Do
-not start coding further stages without explicit go-ahead.**
+Nothing beyond Stage 7 (Stage 8's variety/history/weighted selection,
+Stage A pre-analysis, the deferred background/distant event layer) is
+started or approved. **Do not start coding further stages without explicit
+go-ahead.**

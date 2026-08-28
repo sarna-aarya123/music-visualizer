@@ -137,6 +137,21 @@ const STRONG_BEAT_BAR = 0.72;
 // musicEventDirector.ts) while lighter major events still get their
 // existing lean/sprint reaction, unchanged.
 const JUMP_INTENSITY_BAR = 0.75;
+// Phase 6 Stage 7 — the planned character ability set: launch -> glide ->
+// landing shockwave, all triggered by the director (a major event), all
+// built on the existing jump lifecycle rather than a new system.
+// Only the very strongest major events (drop-caused, ~0.85+) also earn
+// the mid-air glide; everything from JUMP_INTENSITY_BAR up still gets the
+// plain launch + landing as before.
+const GLIDE_INTENSITY_BAR = 0.82;
+// Near-weightless hang at the top of the arc for this long, then normal
+// gravity resumes and the character drops into the landing.
+const GLIDE_DURATION = 0.6;
+const GLIDE_GRAVITY = 4; // vs the normal jump GRAVITY of 20
+// Landing shockwave (the existing groundImpact ripple) scales with how
+// big the launch was — a full drop-launch lands noticeably harder.
+const LANDING_SHOCKWAVE_BASE = 2.6;
+const LANDING_SHOCKWAVE_SCALE = 2.4;
 // Was 0.14s, then 0.32s — Phase 4.1: still not visibly registering as a
 // deliberate "gather before launch". Lengthened and deepened further, plus
 // its ease-in rate (below) slowed, so the crouch is unmistakably a distinct
@@ -195,7 +210,7 @@ const HEAD_EASE_RATE = 3.2;
 const LANDING_SETTLE_DECAY = 3.5;
 
 type MoveState = 'idle' | 'walk' | 'run' | 'sprint';
-type JumpPhase = 'none' | 'anticipation' | 'air' | 'land';
+type JumpPhase = 'none' | 'anticipation' | 'air' | 'glide' | 'land';
 
 /** Target pose parameters per movement state — Character.tsx doesn't have
  *  animation clips, so "transition" means smoothly interpolating these
@@ -321,6 +336,13 @@ export function Character({
   const jumpTimer = useRef(0);
   const jumpOffsetY = useRef(0);
   const jumpVelY = useRef(0);
+  // Stage 7: intensity of the major event that launched the current jump
+  // (drives glide eligibility + landing-shockwave strength), and a
+  // one-shot guard so the glide hang only happens once per jump. `glideBlend`
+  // eases the glide pose in/out so it doesn't pop at the phase boundary.
+  const jumpIntensity = useRef(0);
+  const hasGlided = useRef(false);
+  const glideBlend = useRef(0);
   // Eased 0..1 "how airborne" blend instead of a hard 0/1 switch on
   // jumpPhase — the airborne tuck/spread pose now eases in and out rather
   // than popping instantly the frame the phase changes.
@@ -388,6 +410,8 @@ export function Character({
       if (majorHit > JUMP_INTENSITY_BAR && jumpPhase.current === 'none') {
         jumpPhase.current = 'anticipation';
         jumpTimer.current = 0;
+        jumpIntensity.current = majorHit;
+        hasGlided.current = false;
       }
     }
 
@@ -401,11 +425,36 @@ export function Character({
     // A deliberate special action, not a platformer — only ever triggered
     // by a major musical event.
     const GRAVITY = 20;
+    // Shared landing resolution — reached from 'air' or a glide that runs
+    // its hang out and falls back to the ground. Shockwave strength scales
+    // with the launch intensity (Stage 7).
+    const resolveLanding = () => {
+      jumpOffsetY.current = 0;
+      jumpVelY.current = 0;
+      jumpPhase.current = 'land';
+      jumpTimer.current = 0;
+      compression.current = Math.max(compression.current, 0.85);
+      // Starts the independent, slower-decaying settle (see
+      // LANDING_SETTLE_DECAY) that gives knees/hips a touch more recovery
+      // time than the torso's own squash — a staggered settle rather than
+      // every part snapping back together.
+      landingSettle.current = 1;
+      // Ties the landing into the same world-reactivity language as a beat
+      // — a visible ground ripple right where the character lands, bigger
+      // for a bigger launch.
+      triggerGroundImpact(
+        groupRef.current.position,
+        LANDING_SHOCKWAVE_BASE + jumpIntensity.current * LANDING_SHOCKWAVE_SCALE
+      );
+    };
+
     switch (jumpPhase.current) {
       case 'anticipation':
         jumpTimer.current += dt;
         if (jumpTimer.current > ANTICIPATION_DURATION) {
-          jumpVelY.current = 7.2;
+          // A stronger launch for glide-eligible (drop-caused) events, so
+          // the arc itself is visibly bigger before the hang even starts.
+          jumpVelY.current = jumpIntensity.current > GLIDE_INTENSITY_BAR ? 8.4 : 7.2;
           jumpPhase.current = 'air';
         }
         break;
@@ -413,19 +462,23 @@ export function Character({
         jumpVelY.current -= GRAVITY * dt;
         jumpOffsetY.current += jumpVelY.current * dt;
         if (jumpOffsetY.current <= 0 && jumpVelY.current < 0) {
-          jumpOffsetY.current = 0;
-          jumpVelY.current = 0;
-          jumpPhase.current = 'land';
+          resolveLanding();
+        } else if (jumpVelY.current <= 0 && !hasGlided.current && jumpIntensity.current > GLIDE_INTENSITY_BAR) {
+          // Apex of a big launch: hang almost weightless for a beat.
+          jumpPhase.current = 'glide';
           jumpTimer.current = 0;
-          compression.current = Math.max(compression.current, 0.85);
-          // Starts the independent, slower-decaying settle (see
-          // LANDING_SETTLE_DECAY) that gives knees/hips a touch more
-          // recovery time than the torso's own squash — a staggered
-          // settle rather than every part snapping back together.
-          landingSettle.current = 1;
-          // Ties the landing into the same world-reactivity language as a
-          // beat — a visible ground ripple right where the character lands.
-          triggerGroundImpact(groupRef.current.position, 2.6);
+          hasGlided.current = true;
+        }
+        break;
+      case 'glide':
+        jumpTimer.current += dt;
+        jumpVelY.current -= GLIDE_GRAVITY * dt;
+        jumpOffsetY.current += jumpVelY.current * dt;
+        if (jumpOffsetY.current <= 0) {
+          resolveLanding();
+        } else if (jumpTimer.current > GLIDE_DURATION) {
+          // Hang's over — normal gravity takes back over for the descent.
+          jumpPhase.current = 'air';
         }
         break;
       case 'land':
@@ -562,13 +615,19 @@ export function Character({
 
     // Ease the "how airborne" blend toward its target instead of switching
     // instantly — removes the pop at the anticipation/air/land boundaries.
-    const airTarget = jumpPhase.current === 'air' ? 1 : 0;
+    const airTarget = jumpPhase.current === 'air' || jumpPhase.current === 'glide' ? 1 : 0;
     airBlend.current += (airTarget - airBlend.current) * (1 - Math.exp(-dt * 11));
-    const airTuck = airBlend.current * 0.5;
+    // Stage 7: eased glide-pose weight — arms sweep wide, legs trail, a
+    // slight forward pitch, held only during the weightless hang.
+    const glideTarget = jumpPhase.current === 'glide' ? 1 : 0;
+    glideBlend.current += (glideTarget - glideBlend.current) * (1 - Math.exp(-dt * 8));
+    const glide = glideBlend.current;
+    // Legs trail during a glide (less tuck), arms open wider.
+    const airTuck = airBlend.current * 0.5 * (1 - glide * 0.6);
     // A distinct airborne silhouette — legs/arms spread outward, not just
     // tucked forward, so a jump reads as its own recognizable pose rather
-    // than a scaled-down run frame.
-    const airSpread = airBlend.current * 0.4;
+    // than a scaled-down run frame. The glide opens the arms further still.
+    const airSpread = airBlend.current * 0.4 + glide * 0.5;
 
     const armRatio = pose.current.armAmp / Math.max(pose.current.strideAmp, 0.001);
     if (leftLegRef.current) {
@@ -636,8 +695,10 @@ export function Character({
         SHOULDER_Y - compression.current * 0.3 - pose.current.crouch - anticipationCrouch.current - landingSettle.current * 0.04 + bob + breatheBob;
       // leanTarget/leanDisplay now computed earlier (see above, alongside
       // the hip/shoulder/head secondary motion that reacts to it) — just
-      // applied here.
-      torsoRef.current.rotation.x = leanDisplay.current;
+      // applied here. Stage 7: a small extra forward pitch during a glide
+      // (eased via glideBlend) so the hang reads as "gliding", not just
+      // "floating upright".
+      torsoRef.current.rotation.x = leanDisplay.current + glide * 0.28;
       // A gentle idle look-around/weight-shift — the character keeps
       // moving in small, deliberate ways even at a dead stop, the same
       // "always alive" always-on-animation language the environment uses

@@ -51,8 +51,12 @@ export function WorldParticles({
 
     const beat = consumeBeat(featureFrame, beatState);
     if (beat > 0) burst.current = Math.max(burst.current, beat * 0.6);
+    // Phase 6 Stage 7 readability pass: major-event particle burst eased
+    // back (was 2.2 + major*2) so a drop doesn't fill the screen with big,
+    // bright, fast-moving points that hide the world behind them. Still a
+    // clear surge, just not a whiteout.
     const major = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorState);
-    if (major > 0) burst.current = Math.max(burst.current, 2.2 + major * 2);
+    if (major > 0) burst.current = Math.max(burst.current, 1.3 + major * 1.1);
     burst.current *= Math.exp(-dt * 4);
 
     const swirl = 1 + rhythmState.drumPresence * 1.6;

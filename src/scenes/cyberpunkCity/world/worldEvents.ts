@@ -189,7 +189,15 @@ function spinUp(base: THREE.Matrix4, phaseTime: number, params: EventParams, out
 /** SCATTER_REFORM: at progress 0 each instance sits at a deterministic
  *  scattered offset (own angle/radius/height from `pseudoRandom(index)`)
  *  with extra spin; eases back to exactly the base transform by
- *  progress 1 — "assembling out of chaos". */
+ *  progress 1 — "assembling out of chaos".
+ *
+ *  This is the one evaluator that moves an instance LATERALLY, so a
+ *  binding's `scatterRadius` must not exceed the participating instances'
+ *  own distance from the route corridor — otherwise a solid prop sweeps
+ *  through the character's path mid-event. There is no route data here to
+ *  clamp against, so the constraint lives in the binding author's index
+ *  selection (see `worlds/definitions.ts`'s `cyanScatterIndices`, which
+ *  filters to instances placed comfortably clear of the corridor). */
 function scatterReform(base: THREE.Matrix4, progress: number, params: EventParams, index: number, out: THREE.Matrix4): void {
   const t = ease(progress);
   base.decompose(scratchPos, scratchQuat, scratchScale);
