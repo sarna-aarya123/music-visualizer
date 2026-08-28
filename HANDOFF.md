@@ -18,15 +18,15 @@ direction, matching a reference concept-art sheet (`public/reference.png`).
 
 **Status:** feature-complete and visually signed off by the user. The next
 phase — **Phase 6: Spectacle, Events & the World Director** — is under way;
-see `PLAN.md`. Stages 0-5 are done (dynamic instance-matrix plumbing, a
+see `PLAN.md`. Stages 0-6 are done (dynamic instance-matrix plumbing, a
 `WorldDirector` facade, a real 10-15s multi-phase major-event sequence
-replacing the old ~2.57s flash, moving camera shots for that sequence, and
-now every one of the 9 worlds has its own signature event — buildings/
-pyramids/whales/rings/streetlights/mushrooms/wheels/pagodas actually
-moving during a major sequence, built from each world's own existing
-geometry). Stage 6 onward (background/distant events, character
-abilities, anything requiring genuinely new geometry) has **not** started
-and needs approval before work resumes.
+replacing the old ~2.57s flash, moving camera shots for that sequence,
+every one of the 9 worlds having its own signature event, and — Stage 6 —
+a fix so those cinematic camera shots default to the character as the
+visual anchor instead of losing them to the environment). Stage 7 onward
+(character abilities, background/distant events, anything requiring
+genuinely new geometry) has **not** started and needs approval before
+work resumes.
 
 ---
 
@@ -155,7 +155,7 @@ The folder name is a leftover misnomer. It contains no world any more:
 | `world/musicController.ts` | Speed model + `speedPerceptionFrac` (shared "how fast does this feel"). |
 | `world/worldDirector.ts` | The `WorldDirector` facade — `step()`/`reset()` advance/clear the major-event sequence; `sequence`/`phaseDurations` getters expose its raw phase/timing; `getSequenceCameraShot(...)` is the camera-shot decision (Stage 4), delegated to `cameraShots.ts`. |
 | `world/musicEventDirector.ts` | Rare major events: a real 6-phase (buildup/tension/drop/transform/reveal/aftermath), ≈13s sequence — intensity, origin, exactly-once `impactEventId`, continuous envelope. Driven only via `worldDirector.ts`. |
-| `world/cameraShots.ts` | Stage 4: three pure, zero-allocation camera-path primitives (`push`/`orbit`/`sweep`) + the phase→shot table for the major-event sequence, plus the per-sequence locked-target logic. No rendering — `CameraRig` applies what this computes. |
+| `world/cameraShots.ts` | Stage 4: three pure, zero-allocation camera-path primitives (`push`/`orbit`/`sweep`) + the phase→shot table for the major-event sequence, plus the per-sequence locked-target logic. Stage 6: each `ShotSpec` blends both position (`pivotWeight`) and look-at (`lookWeight`) independently between the character's current position and the locked landmark — character-anchored by default, landmark-heavy only for `reveal`. No rendering — `CameraRig` applies what this computes. |
 | `world/worldEvents.ts` | Stage 5: the "world event executor" — four pure, zero-allocation per-instance transform functions (`riseLike`/`spinUp`/`scatterReform`, ten archetype names mapped onto them) plus `createSignatureEventAnimated(...)`, which each world's `build()` calls to turn a `PropGroup` into one whose flagged instances play out that world's own `EventBinding[]` data across the sequence's phases. No rendering — only `OutlinedInstances` (via the returned `AnimatedInstances`) and `floatingIslands/Islands.tsx`'s own hand-rolled update ever call `setMatrixAt`. |
 | `world/rhythmState.ts` | `drumPresence`, `energyTrend`. |
 | `world/cinematicDirector.ts` | Shot types, selection priority, blend envelope, shot transforms. |
@@ -312,10 +312,11 @@ attempts failed because they used smooth realistic shading.
 ## 10. Git state
 
 - Branch `main`, synced with `github.com/sarna-aarya123/music-visualizer`.
-- Recent history (newest first): Phase 6 Stage 5 (world event
-  archetypes + signature events), Stage 4 (moving camera shots), Stage 3
-  (long-form sequences), Stage 2 (parity director refactor), Stage 1
-  (instance-matrix plumbing), the `HANDOFF.md`/`PLAN.md` rewrite, the
+- Recent history (newest first): Phase 6 Stage 6 (cinematic character
+  focus fix), Stage 5 (world event archetypes + signature events), Stage 4
+  (moving camera shots), Stage 3 (long-form sequences), Stage 2 (parity
+  director refactor), Stage 1 (instance-matrix plumbing), the
+  `HANDOFF.md`/`PLAN.md` rewrite, the
   next-phase plan, the nine cel-shaded worlds (the big rebuild). Run
   `git log --oneline` for exact hashes rather than hand-tracking them here.
 - Check `git status` for whether the working tree is clean and whether
@@ -330,7 +331,7 @@ by real 3D worlds), but it's kept as the visual source of truth.
 ## 11. What's next
 
 See **`PLAN.md`** for the full stage-by-stage plan and history. Current
-state (2026-08-28): Stages 0-5 done and committed —
+state (2026-08-28): Stages 0-6 done and committed —
 
 - **Stage 0:** investigation (perf/architecture for animatable instances).
 - **Stage 1:** `OutlinedInstances`/`PropGroup` gained opt-in per-frame
@@ -360,26 +361,22 @@ state (2026-08-28): Stages 0-5 done and committed —
   events were only confirmed via code review + the shared evaluator
   functions already being visually confirmed elsewhere, not their own
   screenshots).
+- **Stage 6:** fixed the cinematic camera's environment-over-character
+  bias — redefined by the user from the original "background/distant
+  event layer" plan (deferred, folded into Stage 8/9) after watching
+  Stage 4/5's actual output. Root cause (found in code, not guessed):
+  `cameraShots.ts`'s three shot primitives all positioned around AND
+  looked at the locked landmark target, reading `characterPos` exactly
+  once (to help pick that landmark) and never again — the character
+  fell out of frame for most of a sequence, both because nothing ever
+  looked at them and because they kept running away from the one static
+  locked point. Fixed with two independent per-shot blend weights
+  (`pivotWeight` for position, `lookWeight` for look-at, both 0=character/
+  1=landmark) plus a one-line `cinematicDirector.ts` selection-preference
+  swap so its drop-time cut defaults to a character-focused shot instead
+  of `'landmark'`. See `PLAN.md` §10 for the full diagnosis, exact
+  per-phase weights, and verification results.
 
-**Stage 6 has been approved and is next, but is NOT yet started — and has
-been redefined by the user.** It is no longer "background/distant event
-layer" (that's deferred, folded into Stage 8/9 — see `PLAN.md` §7). It is
-now: **fix the cinematic camera's environment-over-character bias.**
-
-**Read `PLAN.md` §10 before writing any Stage 6 code.** Short version: the
-user watched Stage 4/5's actual output and found the camera spends most of
-a major sequence looking at a landmark, cutting to the character for only
-a second via the pre-existing `cinematicDirector` shots, then straight
-back to the environment. §10 has the exact root cause already found in
-code (not guessed) — `cameraShots.ts`'s three shot primitives
-(`push`/`orbit`/`sweep`) all set their look-at to the locked landmark
-target and never reference the character's position after locking it —
-plus the user's full per-phase philosophy for the fix (character as
-default cinematic anchor, environment-focus reserved mainly for
-`reveal`), what to preserve, and verification requirements. Do not
-re-derive this from scratch — §10 already did the investigation.
-
-Nothing beyond Stage 6 (character abilities, Stage A pre-analysis,
-world-specific event archetypes for the other stages) is started or
-approved. **Do not start coding further stages without explicit
-go-ahead**, and stop after Stage 6 for review before Stage 7.
+Nothing beyond Stage 6 (character abilities, Stage A pre-analysis, the
+deferred background/distant event layer) is started or approved. **Do
+not start coding further stages without explicit go-ahead.**

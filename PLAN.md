@@ -1,20 +1,19 @@
 # PLAN — Next Phase: Spectacle, Events & the World Director
 
-> **Status (2026-08-28): Stages 0-5 are complete, verified, and committed**
+> **Status (2026-08-28): Stages 0-6 are complete, verified, and committed**
 > — dynamic instance-matrix plumbing, the `WorldDirector` facade, the
 > ~13s multi-phase major-event sequence, moving cinematic camera shots,
-> and per-world signature events (existing geometry rising/spinning/
-> blooming/scatter-reforming during a sequence). **Stage 6 is next, has
-> been redefined by the user, and is NOT yet started — see §10 for the
-> full brief and a code-verified root-cause diagnosis of the camera's
-> current environment-over-character bias.** Read §10 before touching any
-> camera code for Stage 6.
+> per-world signature events, and (Stage 6) a fix for the camera's
+> environment-over-character bias — the character is now the default
+> cinematic anchor, with landmark-focus reserved mainly for `reveal`. See
+> §10 for the full diagnosis/brief and what was actually changed. **Stage
+> 7 (character abilities) is next and has NOT been approved or started.**
 >
 > **Read `HANDOFF.md` first** for current architecture, conventions,
 > protected systems and known pitfalls.
 >
 > **Stage A (offline audio pre-analysis) remains out of scope** unless the
-> user explicitly asks for it — not needed for Stage 6.
+> user explicitly asks for it.
 
 Originally a read-only investigation prepared for review; Stages 0-5 have
 since been executed exactly as scoped and approved, one at a time, each
@@ -645,14 +644,14 @@ cost well under 0.5ms. Measured live: **60fps sustained both at rest and
 during an active event** (browser `requestAnimationFrame` sampling, see
 §8) — no measurable frame-time regression from this stage.
 
-**Stage 6 — REDEFINED (2026-08-28) by the user, NOT YET STARTED. Cinematic
-character focus + spectacle refinement.** The originally-planned "Stage 6 —
-background/distant event layer" is deferred (now folded into the Stage 8/9
-polish work below, not dropped) — the user identified a higher-priority
-problem after watching Stage 4/5's actual output: **the cinematic camera
-loses the character.** See §10 below for the full brief, findings, and
-exactly what the next session should do. This is the next stage to
-implement, pending the user's return.
+**Stage 6 — DONE (2026-08-28). Cinematic character focus fix.** Redefined
+by the user from the originally-planned "background/distant event layer"
+(deferred, folded into Stage 8/9 below) after watching Stage 4/5's actual
+output and finding the cinematic camera lost the character for most of a
+sequence. See §10 for the full brief, the code-verified root-cause
+diagnosis, and exactly what was changed to fix it — two files
+(`cameraShots.ts`, `cinematicDirector.ts`), no new camera system, no
+rewrite.
 
 **Stage 7 — Character abilities** (launch / glide / landing shockwave),
 triggered by the director.
@@ -876,8 +875,52 @@ and unmount with zero console errors; a full synthetic-track playthrough
   again made it hard to predict exactly which real-clock second would
   show which phase, so screenshots were taken opportunistically across a
   spread of timestamps rather than at planned phase boundaries.
-- **6 (background):** distant events never obscure the path or the
-  character; frequency stays rare.
+- **6 (cinematic character focus) — DONE (2026-08-28), genuinely verified
+  live:** browser pane composited frames this session (`document.hidden`
+  was `false`). `tsc -b`/`build` clean, zero console errors across every
+  test below. Muted/volume-0 throughout per the user's request (in
+  school, no audio) — confirmed via the UI's mute icon before any track
+  was loaded, verified again after.
+  - **Character visibility, the core ask:** watched a full sequence on
+    Cyberpunk Night with closely-spaced screenshots. Multiple frames
+    (≈0:09, ≈0:14, ≈0:19 into the take) showed the character clearly
+    centered and readable with the skyline visible behind/around them —
+    exactly the "wide shot where character is small but clearly readable"
+    and "character + environment together" compositions the brief asked
+    for. This is a stark contrast with Stage 4/5's own verification
+    screenshots (re-examined for comparison), where the character was
+    essentially never in frame during the moving-shot phases.
+  - **Environment-only shots still happen, appropriately:** a Floating
+    Islands take showed a wide aerial reveal-style shot with no character
+    in frame — consistent with `reveal`'s intentionally higher
+    `lookWeight`, and not excessive (one such shot observed across
+    multiple full sequences watched).
+  - **Natural end → restart:** confirmed clean (Cyberpunk Night, twice).
+  - **Seek mid-sequence:** confirmed clean — camera returned to normal
+    gameplay framing immediately, zero errors, no stuck cinematic state.
+  - **First-person mode:** confirmed unaffected — toggling to it during
+    an active sequence showed a normal first-person street-level view
+    with no shot bleed-through (the `(1 - modeBlend)` suppression from
+    Stage 4 still applies unchanged).
+  - **All 9 worlds cycled** (third-person, after the first-person check)
+    with zero console errors — normal gameplay camera confirmed unchanged
+    outside a sequence.
+  - **Not exhaustively re-verified per-world:** only Cyberpunk Night and
+    Floating Islands got a close sequence-in-progress look this session;
+    the other 7 worlds were confirmed only for normal (non-sequence)
+    rendering. The fix is world-agnostic (works purely off
+    `characterPos`/`landmarks`/route-frame vectors already passed into
+    `cameraShots.ts` for every world identically), so this is a
+    reasonable but real gap, consistent with how Stage 4/5 also left
+    some worlds' sequences unscreenshotted.
+  - **Testing-methodology note, not a Stage 6 bug:** same as every prior
+    stage — the synthetic test track's cold-start trigger timing made
+    exact phase timing hard to predict, so screenshots were taken
+    opportunistically rather than at planned phase boundaries.
+- **6 (background)** *(renumbered — this criterion is for the ORIGINAL
+  Stage 6 concept, background/distant events, now deferred into Stage
+  8/9; not this session's redefined Stage 6 above)*: distant events never
+  obscure the path or the character; frequency stays rare.
 - **7 (abilities):** abilities remain rare and musically earned; landing
   recovery still settles naturally.
 - **8 (variety):** the *same track played twice* produces a measurably
@@ -921,11 +964,12 @@ and unmount with zero console errors; a full synthetic-track playthrough
 
 ---
 
-## 10. Stage 6 — Cinematic character focus (next session, NOT STARTED)
+## 10. Stage 6 — Cinematic character focus — DONE (2026-08-28)
 
-**Read this whole section before touching any camera code.** It's the
-complete brief plus a concrete, code-verified diagnosis — not just the
-user's description of the symptom.
+**This section is kept as a permanent record of the diagnosis and brief,
+not just pre-implementation planning** — the reasoning below is still the
+best reference for why the fix looks the way it does. See "What was
+actually implemented" partway through for the concrete result.
 
 ### The problem, in the user's words (2026-08-28)
 
@@ -991,44 +1035,47 @@ environment."
   especially for `reveal`. The fix is *default-to-character, environment
   only when it earns it* — not remove environment framing.
 
-### The likely smallest clean fix (a starting hypothesis, not a mandate)
+### What was actually implemented
 
-`cameraShots.ts`'s `evaluateShot`/`ShotSpec` almost certainly need a
-notion of *what the shot is actually looking at* that isn't hardcoded to
-`target`. The cheapest change that matches the user's per-phase
-philosophy (§ below) without a rewrite: give each `ShotSpec` a
-`lookWeight` (0 = character, 1 = landmark, blend between) and have
-`evaluateShot` lerp `outLook` between `characterPos` (now threaded
-through, not discarded) and `target` by that weight — `push`/`orbit`/
-`sweep`'s POSITION math can stay landmark-anchored (that's what gives the
-"orbiting/sweeping past something" feel), but the look-at is what actually
-controls whether the character reads as the subject. Per-phase defaults
-matching the user's brief:
+The hypothesis below held up once actually built and watched — no bigger
+rewrite was needed. Two files changed, both minimal:
 
-- `buildup`: lookWeight low (mostly character, environment revealing
-  behind/around them)
-- `tension`: lookWeight low — "orbit around character while environment
-  changes in background" (may need `orbit`'s pivot to blend toward
-  `characterPos` too, not just its look-at, to actually orbit the
-  character rather than the landmark)
-- `drop`: character-centered; this is also where `cinematicDirector`'s
-  cut usually dominates — consider biasing its selection away from pure
-  `'landmark'` here
-- `transform`: low-to-mid — "follow/fly around the character while
-  environment changes around them"
-- `reveal`: THIS is where landmark-heavy (`lookWeight` high) is
-  appropriate — the brief explicitly says so — but even here, prefer
-  compositions that keep the character as foreground/silhouette/scale
-  reference over a pure environment-only shot when reasonably achievable
-- `aftermath`: back to low — "return attention toward the character"
+**`cameraShots.ts`:** each `ShotSpec` gained **two** independent weights,
+not just one — `pivotWeight` (0 = character, 1 = landmark) for POSITION
+and `lookWeight` (0 = character, 1 = landmark) for LOOK-AT, both blending
+between `characterPos` (now threaded through `evaluateShot`, not
+discarded after the initial landmark lock) and the locked `target`.
+Decoupling the two turned out to matter: `reveal` uses a LOW `pivotWeight`
+(camera position stays close to the character, so they read as a
+foreground/scale reference) combined with a HIGH `lookWeight` (the camera
+looks mostly toward the landmark) — exactly the "character in foreground,
+landmark behind them" composition the brief asked for, which a single
+combined weight couldn't express. This also incidentally fixed the
+"character drifts out of frame over the ~13s sequence" mechanism flagged
+in the original diagnosis below: because most phases now have a LOW
+`pivotWeight`, the camera's position is majority character-anchored and
+therefore tracks them continuously (via `characterPos`, updated every
+frame) instead of staying locked to the one static point the character
+keeps running away from. Final per-phase weights (`pivotWeight`/
+`lookWeight`): buildup 0.2/0.15, tension 0.15/0.2, drop 0.3/0.25,
+transform 0.35/0.3, reveal 0.25/0.7, aftermath 0.15/0.1 — low almost
+everywhere (character-anchored), reveal is the deliberate outlier.
 
-**This is a hypothesis for the next session to validate, not a spec to
-implement blindly** — the brief explicitly asks to "inspect what Stage 5
-actually produced and determine the smallest clean change," and the
-character-position-tracking gap above may turn out to need more than a
-look-at blend (e.g. periodically re-anchoring `lockedTarget`-relative math
-to the character's *current* position rather than a single static lock)
-once it's actually watched in motion.
+**`cinematicDirector.ts`:** exactly the nudge the diagnosis predicted
+would be enough — the major-event branch's `pickVaried` preference order
+flipped from `('landmark', ['dramaticClose', 'frontFacing'])` to
+`('dramaticClose', ['frontFacing', 'landmark'])`. Character-focused shots
+are now the default for the drop's cinematic cut; `'landmark'` is still
+reachable (variety, `pickVaried` falls through to it), just no longer the
+first choice. Nothing else in this file changed — shot math, durations,
+`MIN_GAP`, the `dropHit`/landmark-proximity/district-transition branches
+(normal-gameplay cinematic variety, unrelated to the Stage 3 sequence) are
+all untouched.
+
+No new camera system, no rewrite of `evaluateShot`'s core position
+formulas (push/orbit/sweep math itself is unchanged) — confirming the
+brief's instinct that this was a targeting/composition problem, not an
+architecture problem.
 
 ### Full user brief for Stage 6 (verbatim scope, preserved for the next session)
 

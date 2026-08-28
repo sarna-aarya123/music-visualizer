@@ -31,12 +31,38 @@ import type { MajorEventPhase, MajorEventState } from './musicEventDirector';
  * Zero per-frame allocation in the hot path: every vector below is a
  * module-level scratch object mutated in place (`.copy()`/
  * `.addScaledVector()`/`.applyAxisAngle()`, never `.clone()`).
+ *
+ * Phase 6 Stage 6: every shot's position and look-at are each a blend
+ * between the character's own current position and the locked landmark
+ * target — `pivotWeight`/`lookWeight` below (0 = character, 1 =
+ * landmark). This replaced an earlier version where every primitive
+ * always positioned around AND looked at the locked landmark, full stop
+ * — the character was read only once, to help pick that landmark, and
+ * never touched again. That made the character fall out of frame for
+ * most of a sequence two ways at once: the look-at never pointed at them,
+ * and because the pivot was a single static point while the character
+ * kept running, they drifted away from it as the sequence went on. Using
+ * `characterPos` (continuously updated every frame, unlike the locked
+ * target) as part of the pivot fixes both — most phases are now
+ * character-anchored with a landmark bias for direction/energy, not
+ * landmark-anchored with the character as an afterthought. See
+ * `PLAN.md` §10 for the full diagnosis and per-phase intent this
+ * implements.
  */
 
 type ShotSpec =
-  | { kind: 'push'; distStart: number; distEnd: number; height: number; lateral: number }
-  | { kind: 'orbit'; radius: number; height: number; angleStart: number; angleSpan: number }
-  | { kind: 'sweep'; alongStart: number; alongEnd: number; lateralStart: number; lateralEnd: number; height: number };
+  | { kind: 'push'; distStart: number; distEnd: number; height: number; lateral: number; pivotWeight: number; lookWeight: number }
+  | { kind: 'orbit'; radius: number; height: number; angleStart: number; angleSpan: number; pivotWeight: number; lookWeight: number }
+  | {
+      kind: 'sweep';
+      alongStart: number;
+      alongEnd: number;
+      lateralStart: number;
+      lateralEnd: number;
+      height: number;
+      pivotWeight: number;
+      lookWeight: number;
+    };
 
 /** Eases 0..1 with zero velocity at both ends — the same curve
  *  `cinematicDirector.ts`'s `smoothstep01` and `musicEventDirector.ts`'s
@@ -47,23 +73,39 @@ function ease(t: number): number {
   return c * c * (3 - 2 * c);
 }
 
-/** Buildup: a slow push toward the upcoming subject — camera starts well
- *  back and drifts closer, foreshadowing what the drop is about to land
- *  on. Tension: holds near it with a gentle partial orbit — the "camera
- *  is waiting" read. Drop: a fast punch-in (mostly hidden behind the
- *  existing cinematicDirector cut, which takes priority — see CameraRig;
- *  kept as a real shot rather than a no-op so the system still does
- *  something sensible on the rare frame the cut isn't active). Transform:
- *  a wide, elevated sweep past the subject. Reveal: pulls back out to a
- *  much wider view — the "here's what changed" read. Aftermath: a slow,
- *  gentle orbit that fades out as the sequence ends. */
+/** Buildup: a slow push that trails the character from far back, closing
+ *  in — an epic "camera catching up" read, character as anchor, whatever
+ *  landmark is ahead visible as they run toward it. Tension: a mostly
+ *  character-pivoted orbit — "the camera is waiting with them" — with
+ *  just enough landmark bias in the look to feel like anticipation, not
+ *  a plain follow-cam. Drop: a fast character-centered punch-in (mostly
+ *  hidden behind the existing cinematicDirector cut, which takes priority
+ *  — see CameraRig; kept as a real shot rather than a no-op so the system
+ *  still does something sensible on the rare frame the cut isn't active).
+ *  Transform: a sweep still anchored mostly on the character, with more
+ *  landmark bias than buildup/tension — "flying around the character
+ *  while the world changes around them". Reveal: THE phase where
+ *  landmark focus is intentional — but the position pivot stays fairly
+ *  character-anchored (so they stay legible as a foreground/scale
+ *  reference) while the look-at swings mostly toward the landmark being
+ *  revealed. Aftermath: pivot and look both swing back toward the
+ *  character — "attention returns to them" as the sequence winds down. */
 const SHOT_TABLE: Partial<Record<MajorEventPhase, ShotSpec>> = {
-  buildup: { kind: 'push', distStart: 46, distEnd: 27, height: 11, lateral: 9 },
-  tension: { kind: 'orbit', radius: 25, height: 9, angleStart: 0.5, angleSpan: 0.65 },
-  drop: { kind: 'push', distStart: 20, distEnd: 12, height: 6, lateral: -4 },
-  transform: { kind: 'sweep', alongStart: -34, alongEnd: 30, lateralStart: -22, lateralEnd: 20, height: 16 },
-  reveal: { kind: 'push', distStart: 22, distEnd: 48, height: 14, lateral: -12 },
-  aftermath: { kind: 'orbit', radius: 30, height: 12, angleStart: -0.3, angleSpan: 0.4 },
+  buildup: { kind: 'push', distStart: 46, distEnd: 27, height: 11, lateral: 9, pivotWeight: 0.2, lookWeight: 0.15 },
+  tension: { kind: 'orbit', radius: 25, height: 9, angleStart: 0.5, angleSpan: 0.65, pivotWeight: 0.15, lookWeight: 0.2 },
+  drop: { kind: 'push', distStart: 20, distEnd: 12, height: 6, lateral: -4, pivotWeight: 0.3, lookWeight: 0.25 },
+  transform: {
+    kind: 'sweep',
+    alongStart: -34,
+    alongEnd: 30,
+    lateralStart: -22,
+    lateralEnd: 20,
+    height: 16,
+    pivotWeight: 0.35,
+    lookWeight: 0.3,
+  },
+  reveal: { kind: 'push', distStart: 22, distEnd: 48, height: 14, lateral: -12, pivotWeight: 0.25, lookWeight: 0.7 },
+  aftermath: { kind: 'orbit', radius: 30, height: 12, angleStart: -0.3, angleSpan: 0.4, pivotWeight: 0.15, lookWeight: 0.1 },
 };
 
 const NEXT_PHASE: Partial<Record<MajorEventPhase, MajorEventPhase>> = {
@@ -118,12 +160,15 @@ export function resetSequenceCameraShot(): void {
 
 // --- Zero-allocation scratch state -----------------------------------
 const scratchDir = new THREE.Vector3();
+const scratchPivot = new THREE.Vector3();
+const scratchLookPoint = new THREE.Vector3();
 const nextPos = new THREE.Vector3();
 const nextLook = new THREE.Vector3();
 
 function evaluateShot(
   spec: ShotSpec,
   progress: number,
+  characterPos: THREE.Vector3,
   target: THREE.Vector3,
   tangent: THREE.Vector3,
   right: THREE.Vector3,
@@ -132,33 +177,41 @@ function evaluateShot(
   outLook: THREE.Vector3
 ): void {
   const t = ease(progress);
+  // Position pivots around a character<->landmark blend (not always the
+  // landmark) and the look-at is its OWN independent blend — see the
+  // file-level comment. Decoupling the two is what lets `reveal` keep
+  // the character legible as a foreground/scale reference (low
+  // pivotWeight) while still swinging the look-at mostly onto the
+  // landmark being revealed (high lookWeight).
+  scratchPivot.copy(characterPos).lerp(target, spec.pivotWeight);
+  scratchLookPoint.copy(characterPos).lerp(target, spec.lookWeight);
   switch (spec.kind) {
     case 'push': {
       const dist = THREE.MathUtils.lerp(spec.distStart, spec.distEnd, t);
       outPosition
-        .copy(target)
+        .copy(scratchPivot)
         .addScaledVector(tangent, -dist)
         .addScaledVector(up, spec.height)
         .addScaledVector(right, spec.lateral);
-      outLook.copy(target);
+      outLook.copy(scratchLookPoint);
       break;
     }
     case 'orbit': {
       const angle = spec.angleStart + spec.angleSpan * t;
       scratchDir.copy(right).applyAxisAngle(up, angle).normalize();
-      outPosition.copy(target).addScaledVector(scratchDir, spec.radius).addScaledVector(up, spec.height);
-      outLook.copy(target);
+      outPosition.copy(scratchPivot).addScaledVector(scratchDir, spec.radius).addScaledVector(up, spec.height);
+      outLook.copy(scratchLookPoint);
       break;
     }
     case 'sweep': {
       const along = THREE.MathUtils.lerp(spec.alongStart, spec.alongEnd, t);
       const lateral = THREE.MathUtils.lerp(spec.lateralStart, spec.lateralEnd, t);
       outPosition
-        .copy(target)
+        .copy(scratchPivot)
         .addScaledVector(tangent, along)
         .addScaledVector(right, lateral)
         .addScaledVector(up, spec.height);
-      outLook.copy(target);
+      outLook.copy(scratchLookPoint);
       break;
     }
   }
@@ -205,7 +258,7 @@ export function getSequenceCameraShot(
   const duration = phaseDurations[seq.phase as Exclude<MajorEventPhase, 'idle'>];
   const progress = duration > 0 ? THREE.MathUtils.clamp(seq.phaseTime / duration, 0, 1) : 1;
 
-  evaluateShot(spec, progress, lockedTarget, tangent, right, up, outPosition, outLook);
+  evaluateShot(spec, progress, characterPos, lockedTarget, tangent, right, up, outPosition, outLook);
 
   // Cross-fade toward the next phase's shot (at its own progress 0) in the
   // last TRANSITION_TIME seconds of this one, so no phase boundary snaps.
@@ -214,7 +267,7 @@ export function getSequenceCameraShot(
   if (nextPhase && timeLeft < TRANSITION_TIME) {
     const nextSpec = SHOT_TABLE[nextPhase];
     if (nextSpec) {
-      evaluateShot(nextSpec, 0, lockedTarget, tangent, right, up, nextPos, nextLook);
+      evaluateShot(nextSpec, 0, characterPos, lockedTarget, tangent, right, up, nextPos, nextLook);
       const mix = ease(1 - timeLeft / TRANSITION_TIME);
       outPosition.lerp(nextPos, mix);
       outLook.lerp(nextLook, mix);

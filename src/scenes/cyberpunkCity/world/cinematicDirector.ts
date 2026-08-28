@@ -138,9 +138,17 @@ export function stepCinematicDirector(
   // already fired, via pickVaried, never whether/how often a cut happens.
   const majorHit = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorConsumer);
   if (majorHit > 0) {
+    // Phase 6 Stage 6: this cut lands right at the drop, which is also
+    // where Stage 3's long-form sequence begins — per the user's brief,
+    // the character (not the landmark) should be the default subject
+    // there, with 'landmark' kept only as an occasional variety pick
+    // rather than the preferred choice `pickVaried` reaches for first.
+    // Selection WEIGHTING only — the shot types themselves, their
+    // durations, and every other branch (regular drops, landmark
+    // proximity, district transitions) are unchanged.
     const nearest = findNearestLandmark(characterPos, landmarks, LANDMARK_TRIGGER_DIST * 1.5);
     const shot = nearest
-      ? pickVaried('landmark', ['dramaticClose', 'frontFacing'])
+      ? pickVaried('dramaticClose', ['frontFacing', 'landmark'])
       : pickVaried('dramaticClose', ['frontFacing', 'lowAngle']);
     startShot(shot, shot === 'landmark' ? 3.2 : 3.0, nearest ?? undefined);
     lastDistrict = district;
