@@ -24,15 +24,22 @@ import type { MajorEventPhase, MajorEventState } from './musicEventDirector';
  * leaving `'idle'`, and cleared by `resetSequenceCameraShot()` (called
  * from `WorldDirector.reset()`) on seek/new-track.
  *
- * Phase 6 Stage 8 — "don't pan into nothing." If there is no landmark
- * close enough to be worth framing, the locked target is the CHARACTER
- * (not, as before, an arbitrary point 40 units ahead down an empty
- * stretch of route — that's what made reveal/transform swing the camera
- * toward blank space "in the middle of nowhere"), and every phase's
- * pivot/look weights are forced near-zero so the whole sequence is a
- * dynamic move that stays framed on the character. The landmark-heavy
- * `reveal` framing only happens when `sequenceHasLandmark` — i.e. when
- * there is actually something there to reveal.
+ * Phase 6 Stage 8 — "the camera belongs behind the character."
+ *  - The moving camera now engages for ONLY the `drop` + `transform`
+ *    window (~3.5s) of a major event. `buildup`/`tension`/`reveal`/
+ *    `aftermath` keep the plain third-person chase camera — the world
+ *    still transforms and the lighting/FOV still spike, the camera just
+ *    stays home.
+ *  - It engages at most once every `CINEMATIC_COOLDOWN` seconds. Major
+ *    events themselves can fire every ~13s in an energetic track; without
+ *    this the camera would be doing a cinematic move most of the time.
+ *  - The shot is small and close (distances near the normal follow
+ *    distance, not 30-46 units back) and character-anchored — it reads as
+ *    "the chase cam gets dynamic for a few seconds at the drop", not a
+ *    cinematic tour.
+ *  - "Don't pan into nothing": if there is no landmark within
+ *    `MAX_TARGET_DIST`, the target IS the character and every weight is
+ *    gated near zero.
  *
  * Zero per-frame allocation in the hot path: every vector below is a
  * module-level scratch object mutated in place (`.copy()`/
@@ -96,38 +103,25 @@ function ease(t: number): number {
  *  reference) while the look-at swings mostly toward the landmark being
  *  revealed. Aftermath: pivot and look both swing back toward the
  *  character — "attention returns to them" as the sequence winds down. */
-// Phase 6 Stage 8: distances pulled in ~25-30% from Stage 4's originals so
-// the character stays a clear, present subject through the whole move (a
-// 46-unit trailing push made them a speck). Pivot/look weights stay low
-// (Stage 6) and are further gated to near-zero when there's no real
-// landmark (the `gate()` helper in getSequenceCameraShot). `reveal` keeps
-// the one deliberately landmark-leaning look, but only when
-// `sequenceHasLandmark`.
+// Phase 6 Stage 8 camera pass 2: only `drop` + `transform` have an entry —
+// every other phase falls through to `return 0` (plain chase camera).
+// Both specs are small and close to the normal follow distance
+// (FOLLOW_DIST 5.5 / FOLLOW_HEIGHT 3.3 in CameraRig) and character-
+// anchored (low pivot/look weights, Stage 6), so this reads as the chase
+// cam getting dynamic for a few seconds at the drop, not a cinematic tour.
 const SHOT_TABLE: Partial<Record<MajorEventPhase, ShotSpec>> = {
-  buildup: { kind: 'push', distStart: 32, distEnd: 22, height: 9, lateral: 7, pivotWeight: 0.18, lookWeight: 0.12 },
-  tension: { kind: 'orbit', radius: 19, height: 8, angleStart: 0.5, angleSpan: 0.6, pivotWeight: 0.14, lookWeight: 0.16 },
-  drop: { kind: 'push', distStart: 15, distEnd: 10, height: 5, lateral: -3, pivotWeight: 0.25, lookWeight: 0.2 },
-  transform: {
-    kind: 'sweep',
-    alongStart: -22,
-    alongEnd: 18,
-    lateralStart: -13,
-    lateralEnd: 12,
-    height: 12,
-    pivotWeight: 0.3,
-    lookWeight: 0.24,
-  },
-  reveal: { kind: 'push', distStart: 18, distEnd: 32, height: 12, lateral: -9, pivotWeight: 0.22, lookWeight: 0.5 },
-  aftermath: { kind: 'orbit', radius: 20, height: 10, angleStart: -0.3, angleSpan: 0.4, pivotWeight: 0.14, lookWeight: 0.1 },
+  drop: { kind: 'push', distStart: 13, distEnd: 8, height: 4, lateral: -3, pivotWeight: 0.15, lookWeight: 0.1 },
+  transform: { kind: 'orbit', radius: 11, height: 5, angleStart: 0.15, angleSpan: 0.45, pivotWeight: 0.15, lookWeight: 0.12 },
 };
 
 const NEXT_PHASE: Partial<Record<MajorEventPhase, MajorEventPhase>> = {
-  buildup: 'tension',
-  tension: 'drop',
   drop: 'transform',
-  transform: 'reveal',
-  reveal: 'aftermath',
 };
+
+/** The moving camera engages at most this often (seconds). A major event
+ *  can fire every ~13s in an energetic track — this is what keeps the
+ *  camera "behind the character most of the time" regardless. */
+const CINEMATIC_COOLDOWN = 30;
 
 /** How long before a phase ends its shot starts blending toward the next
  *  phase's shot (evaluated at ITS progress 0) — guarantees no phase
@@ -151,6 +145,11 @@ const lockedTarget = new THREE.Vector3();
 let hasLockedTarget = false;
 let sequenceHasLandmark = false;
 let wasIdle = true;
+/** Wall-clock (R3F elapsed) of the last time the moving camera engaged,
+ *  and whether THIS sequence is suppressed because the cooldown hadn't
+ *  elapsed when it started. */
+let lastEngageTime = -999;
+let suppressedThisSequence = false;
 
 function findNearestLandmark(pos: THREE.Vector3, landmarks: THREE.Vector3[], maxDist: number): THREE.Vector3 | null {
   let best: THREE.Vector3 | null = null;
@@ -174,6 +173,8 @@ export function resetSequenceCameraShot(): void {
   hasLockedTarget = false;
   sequenceHasLandmark = false;
   wasIdle = true;
+  lastEngageTime = -999;
+  suppressedThisSequence = false;
 }
 
 // --- Zero-allocation scratch state -----------------------------------
@@ -248,6 +249,7 @@ function evaluateShot(
 export function getSequenceCameraShot(
   seq: Readonly<MajorEventState>,
   phaseDurations: Record<Exclude<MajorEventPhase, 'idle'>, number>,
+  elapsed: number,
   characterPos: THREE.Vector3,
   tangent: THREE.Vector3,
   right: THREE.Vector3,
@@ -258,11 +260,15 @@ export function getSequenceCameraShot(
 ): number {
   const isIdle = seq.phase === 'idle';
 
-  // Edge-triggered lock: the instant the sequence leaves 'idle', pick and
-  // freeze a target for its whole duration. Stage 8: if no landmark is
-  // genuinely close, the target IS the character — never a blank point
-  // down the route — and `sequenceHasLandmark` gates the weights below.
+  // Edge-triggered, once per sequence: decide whether the moving camera is
+  // allowed to engage at all (cooldown), and lock its framing target.
   if (wasIdle && !isIdle) {
+    suppressedThisSequence = elapsed - lastEngageTime < CINEMATIC_COOLDOWN;
+    if (!suppressedThisSequence) lastEngageTime = elapsed;
+
+    // Stage 8: if no landmark is genuinely close, the target IS the
+    // character — never a blank point down the route — and
+    // `sequenceHasLandmark` gates the weights below.
     const nearest = findNearestLandmark(characterPos, landmarks, MAX_TARGET_DIST);
     if (nearest) {
       lockedTarget.copy(nearest);
@@ -275,8 +281,10 @@ export function getSequenceCameraShot(
   }
   wasIdle = isIdle;
 
-  if (isIdle || !hasLockedTarget) return 0;
+  if (isIdle || !hasLockedTarget || suppressedThisSequence) return 0;
 
+  // Only `drop` + `transform` engage — every other phase keeps the plain
+  // chase camera (there is no SHOT_TABLE entry, so `spec` is undefined).
   const spec = SHOT_TABLE[seq.phase];
   if (!spec) return 0;
 
@@ -327,13 +335,13 @@ export function getSequenceCameraShot(
     }
   }
 
-  // Envelope: eases the whole system in over the first part of `buildup`
-  // and back out over the last part of `aftermath` — a clear beginning
-  // and end, not an instant appear/disappear.
+  // Envelope: ease in across the short `drop` phase, hold through most of
+  // `transform`, ease back out over its last stretch — a clear ~3.5s
+  // beginning/middle/end, then the chase camera has it back.
   let envelope = 1;
-  if (seq.phase === 'buildup') {
-    envelope = ease(Math.min(1, progress / FADE_FRACTION));
-  } else if (seq.phase === 'aftermath') {
+  if (seq.phase === 'drop') {
+    envelope = ease(progress);
+  } else if (seq.phase === 'transform') {
     const fadeStart = 1 - FADE_FRACTION;
     envelope = progress <= fadeStart ? 1 : 1 - ease((progress - fadeStart) / FADE_FRACTION);
   }

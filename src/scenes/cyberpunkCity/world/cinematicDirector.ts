@@ -57,10 +57,13 @@ export const cinematicState: CinematicState = {
   targetPosition: new THREE.Vector3(),
 };
 
-/** A floor between cuts. With cuts now firing only on a major event —
- *  themselves ≥13s apart (a sequence's own length) — this never actually
- *  binds, but it's kept as a hard guarantee that two cuts can't stack. */
-const MIN_GAP = 6;
+/** Minimum seconds between cuts. Major events can fire every ~13s in an
+ *  energetic track — this holds the cinematic cut to roughly once every
+ *  30s so the camera stays behind the character the vast majority of the
+ *  time. Matches `cameraShots.ts`'s `CINEMATIC_COOLDOWN` so the cut and
+ *  the (brief) sequence camera move engage together on the same major
+ *  event and then both go quiet. */
+const MIN_GAP = 30;
 /** A landmark within this distance when a major event lands is close
  *  enough to sit as a backdrop behind a character shot — it only nudges
  *  WHICH character shot is picked, never triggers a landmark-only one. */

@@ -74,6 +74,7 @@ export const WorldDirector = {
    *  weight and written position/look into an actual `camera.*` change;
    *  WorldDirector never touches rendering. */
   getSequenceCameraShot(
+    elapsed: number,
     characterPos: THREE.Vector3,
     tangent: THREE.Vector3,
     right: THREE.Vector3,
@@ -85,6 +86,7 @@ export const WorldDirector = {
     return getSequenceCameraShot(
       majorEventState,
       PHASE_DURATIONS,
+      elapsed,
       characterPos,
       tangent,
       right,

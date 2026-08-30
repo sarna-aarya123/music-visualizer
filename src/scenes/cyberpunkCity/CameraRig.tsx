@@ -75,16 +75,19 @@ const VERY_STRONG_BAR = 0.88;
 
 type ImpulseKind = 'forward' | 'vertical' | 'rotational' | 'fov' | 'lateral';
 
-/** Weighted so lateral/banking — the one kind of response that reads as
- *  "side to side" — is deliberately rare. Forward/vertical/rotational/FOV
- *  share the rest, so a strong beat still visibly does *something*, just
- *  not the same angled sideways move every time. */
+/** Phase 6 Stage 8: the two kinds that visibly swing the *framing* —
+ *  `rotational` (a look-target "glance") and `lateral` (a sideways
+ *  position shift + bank) — are now rare. `forward`/`vertical`/`fov` are
+ *  along the axis the camera already sits on, so they read as the chase
+ *  cam "breathing" with the beat rather than the camera being moved. The
+ *  chase camera should feel planted; a beat nudges it, it doesn't
+ *  choreograph it. */
 function pickImpulseKind(): ImpulseKind {
   const r = Math.random();
-  if (r < 0.3) return 'forward';
-  if (r < 0.56) return 'vertical';
-  if (r < 0.8) return 'rotational';
-  if (r < 0.92) return 'fov';
+  if (r < 0.4) return 'forward';
+  if (r < 0.72) return 'vertical';
+  if (r < 0.9) return 'fov';
+  if (r < 0.97) return 'rotational';
   return 'lateral';
 }
 
@@ -161,24 +164,28 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
     const dt = Math.min(rawDelta, 0.05);
     const f = featureFrame;
 
+    // Phase 6 Stage 8: every multiplier below cut roughly in half from the
+    // prior tuning — a strong beat should make the chase cam *breathe*,
+    // not lurch. The framing-swinging kinds (rotational/lateral) are cut
+    // hardest and are also now rare (see pickImpulseKind).
     const applyImpulse = (kind: ImpulseKind, magnitude: number) => {
       switch (kind) {
         case 'forward':
-          impulseForward.current = Math.max(impulseForward.current, magnitude * 0.9);
+          impulseForward.current = Math.max(impulseForward.current, magnitude * 0.5);
           break;
         case 'vertical':
-          impulseVertical.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 0.7;
+          impulseVertical.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 0.38;
           break;
         case 'rotational':
-          impulseLookX.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 1.4;
-          impulseLookY.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 0.7;
+          impulseLookX.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 0.6;
+          impulseLookY.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 0.3;
           break;
         case 'fov':
-          impactFov.current = Math.max(impactFov.current, magnitude * 9);
+          impactFov.current = Math.max(impactFov.current, magnitude * 5);
           break;
         case 'lateral':
-          impulseLateral.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 1.1;
-          beatBank.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 0.1;
+          impulseLateral.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 0.5;
+          beatBank.current += (Math.random() < 0.5 ? -1 : 1) * magnitude * 0.05;
           break;
       }
     };
@@ -194,9 +201,9 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
         let kindB = pickImpulseKind();
         if (kindB === kindA) kindB = pickImpulseKind();
         applyImpulse(kindA, 1.3);
-        applyImpulse(kindB, 0.8);
+        applyImpulse(kindB, 0.7);
       } else if (beatHit > STRONG_BEAT_BAR) {
-        applyImpulse(pickImpulseKind(), 0.85);
+        applyImpulse(pickImpulseKind(), 0.8);
       } else {
         applyImpulse(pickImpulseKind(), 0.22);
       }
@@ -207,8 +214,11 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
 
     const dropHit = consumeDrop(f, dropState);
     if (dropHit > 0) {
+      // A forward surge + FOV punch read as speed/impact along the axis the
+      // camera already sits on; the sideways vertical bump is halved so a
+      // drop doesn't jolt the framing.
       impulseForward.current = Math.max(impulseForward.current, 1.4);
-      impulseVertical.current += (Math.random() < 0.5 ? -1 : 1) * 0.6;
+      impulseVertical.current += (Math.random() < 0.5 ? -1 : 1) * 0.3;
       impactFov.current = Math.max(impactFov.current, 15);
     }
 
@@ -217,7 +227,11 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
     if (majorHit > 0) {
       applyMajorLaunch(speed, majorHit);
       impulseForward.current = Math.max(impulseForward.current, majorHit * 2.2);
-      impulseLookX.current += (Math.random() < 0.5 ? -1 : 1) * majorHit * 1.6;
+      // Was majorHit * 1.6 — a big look-target swing on every major event.
+      // Cut hard: the cinematic cut (cinematicDirector) already handles the
+      // framing change for a major event; the chase cam shouldn't also
+      // yank its look.
+      impulseLookX.current += (Math.random() < 0.5 ? -1 : 1) * majorHit * 0.55;
       impactFov.current = Math.max(impactFov.current, majorHit * 16);
     }
     const majorEnvelope = getMajorEventEnvelope();
@@ -367,6 +381,7 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
     // first-person via `(1 - modeBlend)`, matching every other cinematic
     // effect in this file.
     const seqBlendRaw = WorldDirector.getSequenceCameraShot(
+      state.clock.elapsedTime,
       frame.position,
       frame.tangent,
       frame.right,
