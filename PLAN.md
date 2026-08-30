@@ -1682,14 +1682,107 @@ maps are still too bright, and the character still clips solids. This pass:
   space" world; the guard's narrow window can't reach the arc it grazes
   without over-correcting others. World build time ~7ms/world (measured).
 
-### Still open (feeds the rest of Stage 8)
+### Camera pass 4 + glow-back + Desert Dream level pass (2026-08-30)
 
-- Dark worlds (Abyss / Forest / Carnival) and the still-dark character in
-  a few worlds — brightening those, plus the inert `<ambientLight>`
-  situation, is drafted Step 1.
-- Floating Islands walkway railings cut diagonally across the deck on
-  curves (`Walkway.tsx` chord-vs-arc) — geometry cleanup, Step 4.
-- Not verified by eye (audio transport stalls on a background OS window):
-  the calmer beat impulses in motion. The cinematic systems being fully
-  off is verified (headless: `getSequenceCameraShot` returns 0 every
-  phase; the cut flag is a plain `if (!flag) return`).
+User at this point accepted the baseline and asked for three things, all
+"for every environment" going forward: (1) Desert Dream is bland —
+"the character just keeps walking through a patch of sand" — fix it, shape
+up the level, add detail; (2) increase the glow a bit — not back to the
+blinding level, just enough that it's not "insanely bland"; (3) bring back
+*some* cinematic shots — timed with the music, occasional, that make
+sense. Next turn onward = "make the environments feel more alive".
+
+**Cinematics re-enabled, small scope.**
+- `cinematicDirector.ts`: `CINEMATIC_CUTS_ENABLED = true`, `MIN_GAP` 30 → 20.
+  The one trigger is a major event. The shot is always one of three
+  character-GUARANTEED framings — `dramaticClose` / `frontFacing` /
+  `lowAngle` (all tight, character fills frame, can't be occluded).
+  `sideTracking` and `landmark` removed (they were what "cut to the side
+  view with the character not in frame"). Duration 3.2s.
+- `cameraShots.ts`: `SEQUENCE_CAMERA_ENABLED = true`, `CINEMATIC_COOLDOWN`
+  30 → 20. Still only engages `drop`+`transform` (~3.5s), small/close/
+  character-anchored, once per 20s. Reinforces the cut's timing.
+- Net: a major event → one ~3s character cut + a brief close move, at most
+  once per 20s, then back to the chase cam. Headless-verified: the cut
+  fires `dramaticClose` on a major event (blend → 1.0); the sequence
+  engages drop+transform only and a second sequence 13s later is fully
+  suppressed by the cooldown.
+
+**Glow brought partway back (all worlds).**
+- `VisualizerCanvas`: bloom `luminanceThreshold` 0.34 → **0.28** (0.22 was
+  the blinding-slab value, 0.34 killed all glow); base intensity 0.4 → 0.5,
+  event term 1.4 → 2.0, clamp 2.5 → 2.9.
+- `WorldPath` style-2 grid additive clamp 0.7 → **0.9** (0.7 read flat;
+  original was ~3.8).
+- `definitions.ts` emissive floors on the bright worlds bumped from the
+  Stage-8 lows back up ~30% (Void solids 0.32 → 0.42 + rim 0.7 → 0.85,
+  Void rings 0.42 → 0.55, Carnival bulbs 0.5 → 0.72, PS2 lampHeads
+  0.5 → 0.68 / lit 0.5 → 0.6, Cyberpunk signs 0.5 → 0.6 / windows
+  0.4 → 0.48, Outer shards 0.22 → 0.28 / rings 0.3 → 0.4).
+- **Confirmed by eye:** Cyberpunk / Void floors now glow (not flat, not a
+  slab); neon solids have a halo again.
+
+**Desert Dream — level pass (`buildDesert` largely rewritten).**
+- Root cause: props were placed relative to the FULL corridor radius, which
+  in wide districts (15-26u) is far off the ~5u-wide visible walkway, so
+  long stretches had nothing beside the path; and `path.colorA/B` were the
+  same beige as the sand so the walkway vanished.
+- New `flank(..., baseHalf)` param: pass a small base (≈ visible deck
+  half-width) to place a prop relative to the visible path instead of the
+  corridor; the self-clearance scan then guards against that width. Used
+  for Desert's near-field dressing.
+- New/changed groups: `rocks` (150 `ico1` boulders, half-buried at the
+  path edge — the main filler), `stones` (56 `box` standing pillars,
+  alternating sides, leaning), `palms` (`cylTaper` trunk + `dome` frond
+  crown, ×26), `arches` (11 half-sunk `torusThick` standing on end — big
+  silhouettes the path passes), split dunes (74 small `baseHalf` dunes
+  right beside the road + 60 big `flank`+`ownRadius` dunes behind + the
+  46 far-ridge), cacti brought close (`baseHalf`), 5 of the 11 pyramids
+  brought in close+low so the chase cam frames them, mesas closer.
+- `path` colours → dark packed-clay (`#b86c3c`/`#7a4526`) vs pale sand;
+  fog `#d8825a` 75/340; `exposure` 1.05 → 1.15. `obstacleKeys` +=
+  `arches`, `stones`.
+- `flank` self-clearance push cap now scales with `ownRadius`
+  (`extra*0.85 + ownRadius*0.6 + 3`) so a big mound on a hairpin actually
+  clears.
+- Headless: near-field props (rocks/stones/palms/cacti/arches) 0
+  intrusions, 4.9-14u clear. Big/far dunes still trip the wrong-loop-
+  segment metric artifact (sunk 30-53u below the route, 120-270u out) but
+  the small near dunes are ≤5u tall so brushing a crest reads as terrain.
+  **Confirmed by eye:** the desert now has rocks, pillars, palms, arches,
+  dune ridges and a readable dark road — not a blank sand plane. Some
+  mid-stretches are still a bit brown/sparse.
+
+Protected files (`FeatureExtractor`, `beatConsumer`, `AudioEngine`,
+`routeGenerator`, `musicController`/Phase-5 speed, `musicEventDirector`,
+`CameraRig`): all 0 diff this pass.
+
+### Still open (feeds the rest of Stage 8 — "make environments feel alive")
+
+- **Dark worlds** (Abyss / Forest / Carnival) still need brightening — the
+  opposite of the bright-world job. `<ambientLight>` in `WorldScene` is
+  inert (all props use custom shaders with a hardcoded light dir), so
+  brightness there comes from material base colours / fog / sky exposure,
+  not a light. Drafted Step 1.
+- **Character readability** — the outfit is near-black in Cyberpunk /
+  Abstract Void / Abyss / Forest, so the character is a silhouette in
+  those. `characterAppearance.ts` + a mild shadow-lift on the character
+  shader. Drafted Step 1.
+- **Desert mid-stretches** still a bit brown/sparse — could use ground
+  texture / a bit more prop density between clusters, or a warmer grade.
+- **Continuous music-reactivity** — the big one: the world should breathe
+  with the music BETWEEN major events (emissive shimmer on flux, ambient
+  prop sway on `drumPresence`, sky/grade drift on `energyTrend`), so it's
+  not `run → event → run`. Drafted Step 5. Everything it needs is already
+  in `AudioFeatureFrame` + `rhythmState` — no `FeatureExtractor` change.
+- **Floating Islands walkway railings** cut diagonally across the deck on
+  curves (`Walkway.tsx` chord-vs-arc, `POST_EVERY = 6`) — geometry
+  cleanup.
+- Per-world geometry audit for the other 7 worlds (not just Desert).
+- **Verification caveat:** the browser preview renders (rAF 60fps, frames
+  composite) but the AUDIO TRANSPORT stalls when the OS window isn't
+  foreground — playback only advances in short bursts, so a full
+  continuous drop/sequence and FPS-under-load can't be watched. Static
+  per-world visuals, idle camera, and seeked-in single frames DO work.
+  Mechanism-level checks are done headlessly (esbuild-bundle the real
+  modules, run under Node).

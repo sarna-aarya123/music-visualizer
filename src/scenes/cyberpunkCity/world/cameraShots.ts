@@ -24,15 +24,17 @@ import type { MajorEventPhase, MajorEventState } from './musicEventDirector';
  * leaving `'idle'`, and cleared by `resetSequenceCameraShot()` (called
  * from `WorldDirector.reset()`) on seek/new-track.
  *
- * Phase 6 Stage 8 — **the sequence camera is OFF**
- * (`SEQUENCE_CAMERA_ENABLED = false`). Same story as the cinematic cut in
- * `cinematicDirector.ts`: after several passes it still read as the camera
- * "randomly" moving off the character. So `getSequenceCameraShot` now
- * returns 0 unconditionally and the camera is the plain third-person
- * chase cam through a major event — the world still transforms and the
- * FOV/lighting still spike, the camera just stays behind the character.
- * The primitives, phase table, cooldown and no-landmark gating are all
- * kept intact and dormant for a future, more deliberate re-enable.
+ * Phase 6 Stage 8 — the sequence camera is back ON
+ * (`SEQUENCE_CAMERA_ENABLED = true`) but deliberately minimal: it engages
+ * ONLY for the `drop` + `transform` window (~3.5s) of a major event —
+ * `buildup`/`tension`/`reveal`/`aftermath` keep the plain chase cam — at
+ * most once per `CINEMATIC_COOLDOWN` seconds, with small close
+ * character-anchored shots (distances near the normal follow distance,
+ * not 30-46 units back). It reinforces the cinematicDirector cut's timing
+ * — a quick dynamic move that lands with the drop, then the chase cam has
+ * it back. If there's no landmark within `MAX_TARGET_DIST` the target is
+ * the character and every weight is gated near zero (no "pan into
+ * nothing").
  *
  * Zero per-frame allocation in the hot path: every vector below is a
  * module-level scratch object mutated in place (`.copy()`/
@@ -113,11 +115,12 @@ const NEXT_PHASE: Partial<Record<MajorEventPhase, MajorEventPhase>> = {
 
 /** Master switch. `false` = the sequence camera never engages; the camera
  *  is the plain third-person chase cam through a major event. */
-const SEQUENCE_CAMERA_ENABLED = false;
+const SEQUENCE_CAMERA_ENABLED = true;
 
-/** The moving camera engages at most this often (seconds) — only relevant
- *  when the flag above is on. */
-const CINEMATIC_COOLDOWN = 30;
+/** The moving camera engages at most this often (seconds). Matches
+ *  `cinematicDirector.ts`'s `MIN_GAP` so the cut and this brief move fire
+ *  together on one major event, then both go quiet. */
+const CINEMATIC_COOLDOWN = 20;
 
 /** How long before a phase ends its shot starts blending toward the next
  *  phase's shot (evaluated at ITS progress 0) — guarantees no phase

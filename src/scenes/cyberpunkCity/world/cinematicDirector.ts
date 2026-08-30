@@ -9,23 +9,22 @@ import { majorEventState } from './musicEventDirector';
  * constant camera motion. The gameplay camera (CameraRig.tsx) stays the
  * default; this only ever decides WHEN and WHICH short cut happens.
  *
- * Phase 6 Stage 8 — **cinematic cuts are OFF.** After several rounds of
- * the camera still reading as "random" / cutting to angles where the
- * character wasn't clearly in frame, the whole cut system is disabled
- * (`CINEMATIC_CUTS_ENABLED = false`). The camera is now the third-person
- * chase camera, full stop — it stays behind the character. Everything
- * below (shot table, selection, blend envelope) is kept intact and
- * dormant so a future, more careful cinematic layer can be switched back
- * on deliberately; nothing calls `startShot` while the flag is false, so
- * `cinematicState.shot` never leaves `'gameplay'` and `getCinematicBlend`
- * always returns 0.
+ * Phase 6 Stage 8 — cinematic cuts are back ON, but deliberately small in
+ * scope. ONE trigger: a major event (`majorEventState.impactEventId` — the
+ * rare coordinated drop). One cut, ~3s, at least `MIN_GAP` seconds apart.
+ * The shot is always one of three CHARACTER-GUARANTEED framings —
+ * `dramaticClose` (tight 3/4 behind), `frontFacing` (ahead, running at
+ * camera), `lowAngle` (ground level behind) — all close enough that the
+ * character fills the frame and can't be occluded. The `sideTracking` and
+ * `landmark` shots (which could put geometry between camera and character,
+ * or lose the character off-frame) are NOT used.
  *
- * History (why the flag, not a delete): cuts used to fire on
- * landmark-proximity / district-transition / every drop — every few
- * seconds, pointed at the environment. Pass 1 cut that to major-events-
- * only + character shots; pass 2 added a 30s gap. It still wasn't enough
- * — a 3s cut to a side angle mid-run, even aimed at the character, reads
- * as "why did the camera just do that". So: off.
+ * History: cuts used to fire on landmark-proximity / district-transition /
+ * every drop — a cut every few seconds, pointed at the environment. That
+ * was cut back to major-events-only + character shots, then briefly
+ * disabled entirely while the framing was sorted out. This is the
+ * deliberate re-enable: a cut that lands WITH the drop, frames the
+ * protagonist, and then it's back to the chase cam.
  */
 
 export type ShotType =
@@ -55,10 +54,12 @@ export const cinematicState: CinematicState = {
 
 /** Master switch. `false` = no cinematic cuts at all; the camera is the
  *  plain third-person chase cam. */
-const CINEMATIC_CUTS_ENABLED = false;
+const CINEMATIC_CUTS_ENABLED = true;
 
-/** Minimum seconds between cuts (only relevant when the flag above is on). */
-const MIN_GAP = 30;
+/** Minimum seconds between cuts. Major events fire roughly every 13-20s+
+ *  in an energetic track; this keeps a cut to at most ~once per 20s so
+ *  the camera is behind the character the large majority of the time. */
+const MIN_GAP = 20;
 /** A landmark within this distance when a major event lands is close
  *  enough to sit as a backdrop behind a character shot — it only nudges
  *  WHICH character shot is picked, never triggers a landmark-only one. */
@@ -140,13 +141,13 @@ export function stepCinematicDirector(
   const cooldownOk = elapsed - lastShotEndTime > MIN_GAP;
   if (cinematicState.shot !== 'gameplay' || !cooldownOk) return;
 
-  // Dormant path: on a major event, a single character-focused cut.
+  // On a major event: one tight, character-guaranteed cut (~3s), varied
+  // so consecutive cuts aren't the same angle. No landmark/sideTracking —
+  // see the file header.
   if (majorHit > 0) {
-    const backdrop = findNearestLandmark(characterPos, landmarks, LANDMARK_BACKDROP_DIST) !== null;
-    const shot = backdrop
-      ? pickVaried('sideTracking', ['dramaticClose', 'frontFacing'])
-      : pickVaried('dramaticClose', ['frontFacing', 'lowAngle']);
-    startShot(shot, 3.0);
+    void characterPos;
+    void landmarks;
+    startShot(pickVaried('dramaticClose', ['frontFacing', 'lowAngle']), 3.2);
   }
 }
 

@@ -25,34 +25,46 @@ every one of the 9 worlds having its own signature event, Stage 6's
 character-first cinematic-anchor fix, and — Stage 7 — an effect-brightness
 readability rebalance, a cinematic-camera environment-clearance pass, a
 character/prop intersection fix, and the planned launch/glide/landing-
-shockwave character ability). **Stage 8** has NOT formally started — a 6-step plan is drafted and
-unapproved — but user-directed fixes have landed over several commits
-(`PLAN.md` §12):
-- **Camera:** cinematic cuts (`cinematicDirector.ts`) AND the major-event
-  sequence camera (`cameraShots.ts`) are **both switched OFF** via
-  `CINEMATIC_CUTS_ENABLED` / `SEQUENCE_CAMERA_ENABLED = false` after
-  several rounds of the user reporting the camera still moved "randomly"
-  off the character. The camera is now purely the third-person chase cam;
-  FOV punch / forward surge / `altitudeDive` / (halved) beat impulses
-  still react to the music but only ever keep the camera behind the
-  character. All the cinematic machinery is intact and dormant.
+shockwave character ability). **Stage 8** has NOT formally started as a plan — a 6-step plan is drafted
+and unapproved — but many user-directed fixes have landed over several
+commits (full detail in `PLAN.md` §12). Current state:
+
+- **Camera:** cinematic cuts and the major-event sequence camera are
+  **ON but small-scope** (`CINEMATIC_CUTS_ENABLED` / `SEQUENCE_CAMERA_ENABLED
+  = true`). They were disabled for a couple of commits after the user kept
+  reporting "random" camera moves; now re-enabled deliberately: ONE
+  trigger (a major event), one ~3s cut that always uses a
+  character-guaranteed framing (`dramaticClose`/`frontFacing`/`lowAngle` —
+  no `sideTracking`/`landmark`), plus a brief close `drop`+`transform`
+  move, at most **once per 20s**, then back to the plain chase cam. The
+  landmark-proximity / district-transition / every-drop triggers are gone
+  for good. Per-beat camera impulses in `CameraRig` are ~halved from the
+  historical tuning (the chase cam is planted). Flip either flag to `false`
+  to kill cinematics entirely — the machinery stays intact.
 - **Brightness:** the three neon-grid worlds (Cyberpunk / Outer / Void)
-  toned down — bloom `luminanceThreshold` 0.22 → 0.34, the style-2 path
-  grid additive term clamped, emissive floors on the bright worlds cut
-  (Void 0.6→0.32, Carnival bulbs 1.0→0.5, etc.). Confirmed by eye: floors
-  went from a blinding slab to a readable surface. The DARK worlds (Abyss
-  / Forest / Carnival) still need the opposite treatment.
-- **Clipping:** `flank()` now has a self-clearance guard that pushes a
-  hairpin-inside prop directly away from the neighbouring arc it grazes;
-  Floating Islands near-islands pushed further out + lower and their
-  sakura clustered toward the island centre. Headless before/after
-  confirms every real intrusion fixed (Forest / Void / PS2 / FI trees),
-  no regressions, one sub-unit residual in Abstract Void.
+  were toned way down, then brought partway back on the user's request —
+  bloom `luminanceThreshold` now **0.28** (0.22 = blinding slab, 0.34 =
+  dead flat), style-2 path grid additive clamp **0.9**, emissive floors on
+  the bright worlds sit ~30% below their originals. The DARK worlds (Abyss
+  / Forest / Carnival) and the near-black character outfits in several
+  worlds still need the OPPOSITE treatment.
+- **Clipping:** `flank()` has a self-clearance guard that pushes a
+  hairpin-inside prop away from the neighbouring arc it grazes (push cap
+  scales with the prop's radius). Floating Islands islands/trees moved out
+  + down. Headless before/after: every real intrusion fixed, no
+  regressions, one sub-unit residual tetrahedron in Abstract Void.
+- **Desert Dream** was rebuilt (`buildDesert`): the near field was empty
+  (props placed off the ~5u visible path in wide districts) and the road
+  was invisible (same beige as sand). New `flank(..., baseHalf)` param
+  places dressing relative to the visible path; new `rocks` / `stones` /
+  `palms` / `arches` groups + closer dunes/cacti/pyramids; dark clay road
+  colours. Confirmed by eye: it's a real desert now.
 
 Remaining Stage 8 work (brightening the DARK worlds + character
-readability, camera collision, per-world geometry cleanup incl. FI
-railings, continuous music-reactivity, character presence) is not started
-and needs approval.
+readability, continuous music-reactivity so the world breathes between
+events, per-world geometry cleanup incl. the FI railings, camera
+collision robustness) is not started. **The user said the next phase is
+"make the environments feel more alive."**
 
 ---
 
@@ -185,8 +197,8 @@ The folder name is a leftover misnomer. It contains no world any more:
 | `world/worldEvents.ts` | Stage 5: the "world event executor" — four pure, zero-allocation per-instance transform functions (`riseLike`/`spinUp`/`scatterReform`, ten archetype names mapped onto them) plus `createSignatureEventAnimated(...)`, which each world's `build()` calls to turn a `PropGroup` into one whose flagged instances play out that world's own `EventBinding[]` data across the sequence's phases. No rendering — only `OutlinedInstances` (via the returned `AnimatedInstances`) and `floatingIslands/Islands.tsx`'s own hand-rolled update ever call `setMatrixAt`. Stage 7: `scatterReform` (the one evaluator that moves instances *laterally*) now documents that a binding's `scatterRadius` must stay within the participating instances' own route clearance — enforced by binding-author index selection, since this file has no route data. |
 | `shared/cameraObstacles.ts` | Stage 7: derives coarse bounding spheres from a world's already-computed instance matrices (`obstaclesFromMatrices` / `collectObstacles`), fed to `WorldBase.cameraObstacles` and consumed by `CameraRig`'s cinematic-camera clearance pass. NOT collision, NOT corridor-clearance — a camera-only "don't sail a moving shot through that building" hint. |
 | `world/rhythmState.ts` | `drumPresence`, `energyTrend`. |
-| `world/cinematicDirector.ts` | Shot types, blend envelope, shot transforms. **Stage 8: cinematic cuts are OFF** (`CINEMATIC_CUTS_ENABLED = false`) — the machinery (major-event-only trigger, character shots, 30s gap) is intact and dormant. |
-| `world/cameraShots.ts` | The major-event *sequence* camera. **Stage 8: OFF** (`SEQUENCE_CAMERA_ENABLED = false`) — `getSequenceCameraShot` returns 0. Dormant machinery: engages only `drop`+`transform`, once per `CINEMATIC_COOLDOWN` (30s), small/close/character-anchored shots. |
+| `world/cinematicDirector.ts` | Cinematic cut. **Stage 8:** `CINEMATIC_CUTS_ENABLED = true`; ONE trigger (major event), ~3s, always `dramaticClose`/`frontFacing`/`lowAngle` (character-guaranteed — no `sideTracking`/`landmark`), `MIN_GAP` 20s. Set the flag `false` to disable. |
+| `world/cameraShots.ts` | The major-event *sequence* camera. **Stage 8:** `SEQUENCE_CAMERA_ENABLED = true`; engages only `drop`+`transform` (~3.5s), once per `CINEMATIC_COOLDOWN` (20s), small/close/character-anchored, character target + gated weights when no landmark. Set the flag `false` to disable. |
 | `world/{camera,character}MotionState.ts`, `groundImpactState.ts` | Cross-system singletons. |
 | `world/seededRandom.ts` | mulberry32 — deterministic world generation. |
 
@@ -239,9 +251,18 @@ worlds animates and why.
 **Clearance rule:** props must be placed at
 `corridorRadius + ownRadius + margin`. The `flank()` helper takes
 `ownRadius` for exactly this — omitting it caused large scenery to cut
-through the walkway. Signature events never violate this: every one is
-pure vertical lift/scale/rotation around a prop's own already-placed
-position, never a lateral move toward the corridor.
+through the walkway. `flank()` also has a **self-clearance guard**
+(Stage 8): after computing the offset it scans a narrow t-window and, if
+the point grazes a slightly-later arc of the same closed loop (the inside
+of a tight hairpin), pushes it directly away from that arc. And an
+optional `baseHalf` param: pass a small value (≈ the ~5u visible deck
+half-width) to place near-field dressing relative to the VISIBLE path
+instead of the full corridor — needed because wide districts have a
+15-26u corridor, which pushes "just beyond the corridor" props off-screen
+(this was Desert Dream's emptiness). Signature events never violate the
+clearance rule: every one is pure vertical lift/scale/rotation around a
+prop's own already-placed position, never a lateral move toward the
+corridor.
 
 **Structural coherence rule (Stage 5):** if a prop group is rigidly
 attached to another (window bands mounted on a tower, a ferris wheel's

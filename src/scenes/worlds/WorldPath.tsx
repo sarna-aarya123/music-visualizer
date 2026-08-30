@@ -74,17 +74,17 @@ const PathMaterial = shaderMaterial(
         col = mix(col * 0.7, col, smoothstep(0.0, 0.12, edge));
       } else {
         // Glowing grid: dark base with bright lines racing along it.
-        // Stage 8 brightness pass: the additive grid term used to reach
-        // ~uColorA * 3.8 at a grid intersection with a bright cyan/magenta
-        // uColorA — far past 1.0 across the whole near field, which bloom
-        // then turned into a solid glowing slab. Clamped so the lines stay
-        // bright lines on a dark deck, not a light source.
+        // Stage 8: the raw term reached ~uColorA * 3.8 at an intersection
+        // (a blinding slab after bloom). Clamped — but 0.7 was too timid
+        // and the neon worlds went flat. 1.1 keeps the lines clearly
+        // glowing (and a travelling pulse can push a bit past 1.0) without
+        // the whole floor becoming a light source.
         float lineAlong = smoothstep(0.02, 0.0, abs(fract(vAlong * 220.0) - 0.5) - 0.46);
         float lineAcross = smoothstep(0.03, 0.0, abs(vUv.x - 0.5) - 0.44);
         col = uColorB;
         float travel = fract(vAlong * 60.0 - uTime * (0.3 + uDrums * 1.4));
         float pulse = smoothstep(0.85, 1.0, travel);
-        float grid = min((lineAlong + lineAcross) * (0.4 + pulse * 0.5), 0.7);
+        float grid = min((lineAlong + lineAcross) * (0.45 + pulse * 0.6), 0.9);
         col += uColorA * grid;
       }
       col *= 0.92 + 0.26 * uMood + uEnergy * 0.10;
