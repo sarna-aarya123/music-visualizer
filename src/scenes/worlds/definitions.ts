@@ -50,7 +50,17 @@ function at(route: RouteData<string>, t: number) {
  *  far, and it never pulls the prop back across the corridor at `t`
  *  (it started `extra` clear of it). No-op for the ~99% of props already
  *  clear. Route generation / corridor radii are untouched — this is
- *  placement only. */
+ *  placement only.
+ *
+ *  `baseHalf` (Stage 8): normally the sideways offset is measured from the
+ *  full corridor edge (`corridorRadius`). In WIDE districts that radius is
+ *  15-26 units, so "just beyond the corridor" is far off the ~5-wide
+ *  VISIBLE walkway — long stretches then have nothing beside the path.
+ *  Pass a small `baseHalf` (≈ the visible deck half-width) to place a prop
+ *  relative to the visible path instead; the self-clearance scan then
+ *  guards against that same width, not the big corridor. Use only for
+ *  small near-field dressing that reads fine sitting inside a wide
+ *  district's reserved zone. */
 const SELF_CLEAR_MARGIN = 2.5;
 function flank(
   route: RouteData<string>,
@@ -58,12 +68,14 @@ function flank(
   side: -1 | 1,
   extra: number,
   lift = 0,
-  ownRadius = 0
+  ownRadius = 0,
+  baseHalf?: number
 ): THREE.Vector3 {
   const { f, r } = at(route, t);
+  const base = baseHalf ?? r;
   const p = f.position
     .clone()
-    .addScaledVector(f.right, side * (r + ownRadius + extra))
+    .addScaledVector(f.right, side * (base + ownRadius + extra))
     .addScaledVector(f.up, lift);
 
   // Window kept deliberately narrow (~±3% of the loop): wide enough for a
@@ -78,7 +90,7 @@ function flank(
     const dx = p.x - s.f.position.x;
     const dz = p.z - s.f.position.z;
     const dist = Math.hypot(dx, dz);
-    const need = s.r + ownRadius + SELF_CLEAR_MARGIN;
+    const need = (baseHalf ?? s.r) + ownRadius + SELF_CLEAR_MARGIN;
     if (dist < need && dist > 1e-3) {
       const d = need - dist;
       if (d > deficit) {
@@ -89,7 +101,10 @@ function flank(
     }
   }
   if (deficit > 0) {
-    const push = Math.min(deficit, extra * 0.85 + 3);
+    // Cap scales with the prop's own radius too — a big mound needs a big
+    // push to actually clear a neighbouring arc, whereas the old flat
+    // `extra*0.85 + 3` only ever nudged small props.
+    const push = Math.min(deficit, extra * 0.85 + ownRadius * 0.6 + 3);
     p.x += dirX * push;
     p.z += dirZ * push;
   }
@@ -190,7 +205,7 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'windows',
       geometry: G.box,
-      toon: { color: '#ffc46a', shadow: '#8a4a2a', rim: '#fff0c0', rimStrength: 0.3, emissive: 0.4 },
+      toon: { color: '#ffc46a', shadow: '#8a4a2a', rim: '#fff0c0', rimStrength: 0.3, emissive: 0.48 },
       matrices: windows,
       reactive: { mood: 0.4, drums: 0.3, event: 1.4 },
       animated: createSignatureEventAnimated(windows, eventWindowIndices, windowBindings),
@@ -198,7 +213,7 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'signs',
       geometry: G.box,
-      toon: { color: '#ff3fa8', shadow: '#5a1050', rim: '#ffd0ee', rimStrength: 0.5, emissive: 0.5 },
+      toon: { color: '#ff3fa8', shadow: '#5a1050', rim: '#ffd0ee', rimStrength: 0.5, emissive: 0.6 },
       matrices: signs,
       reactive: { drums: 0.6, event: 1.8 },
     },
@@ -207,43 +222,53 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
 }
 
 // ---------------------------------------------------------------------------
-// 2. DESERT DREAM — floating pyramids over dunes, cacti, surreal sun
+// 2. DESERT DREAM — floating pyramids, dunes, standing stones, palms, cacti
 // ---------------------------------------------------------------------------
+// Stage 8 level pass: the old version placed everything (pyramids 34-154u
+// out, mesas 14-84u, dunes sunk to the crest) so far off the route that
+// long stretches had NOTHING beside the path, and the path colours were
+// the same beige as the sand so you couldn't tell where the walkway was —
+// "the character just keeps walking through a patch of sand". Now the
+// near field is populated (rocks, standing stones, palms, close cacti,
+// raised dunes, a few low arches) and some pyramids/mesas are brought
+// close enough for the chase cam to actually frame them.
 function buildDesert(route: RouteData<string>, seed: number): BuiltWorld {
   const rng = createRng(seed ^ 0x22);
   const pyramids: THREE.Matrix4[] = [];
   const dunes: THREE.Matrix4[] = [];
   const mesas: THREE.Matrix4[] = [];
   const cacti: THREE.Matrix4[] = [];
+  const rocks: THREE.Matrix4[] = [];
+  const stones: THREE.Matrix4[] = [];
+  const palms: THREE.Matrix4[] = [];
+  const fronds: THREE.Matrix4[] = [];
+  const arches: THREE.Matrix4[] = [];
   const debris: THREE.Matrix4[] = [];
   const landmarkPositions: THREE.Vector3[] = [];
 
-  // Hero: monumental pyramids hanging in the sky. Kept close to upright
-  // (a small tilt only) and few in number — the reference reads as a few
-  // colossal, deliberate structures, not a field of tumbling shapes.
+  // Hero: monumental floating pyramids. 6 are the distant colossi (as
+  // before); the other 5 are brought in close and low so they loom
+  // alongside/ahead of the path and the chase cam actually catches them.
   for (let i = 0; i < 11; i++) {
     const t = i / 11 + rng() * 0.03;
     const s = side(rng);
-    const size = 30 + rng() * 46;
-    const p = flank(route, t, s, 34 + rng() * 120, 40 + rng() * 74, size);
+    const near = i >= 6;
+    const size = near ? 16 + rng() * 16 : 32 + rng() * 44;
+    const lateral = near ? 16 + rng() * 20 : 40 + rng() * 110;
+    const lift = near ? 14 + rng() * 18 : 42 + rng() * 70;
+    const p = flank(route, t, s, lateral, lift, size);
     pyramids.push(
       mat(p, [rng() * 0.14 - 0.07, rng() * Math.PI, rng() * 0.14 - 0.07], [size, size * 1.05, size])
     );
     landmarkPositions.push(p.clone());
-    // A scatter of shed blocks orbiting each pyramid, matching the
-    // reference's debris drifting off the floating masses.
-    const chunks = 4 + Math.floor(rng() * 5);
+    const chunks = 3 + Math.floor(rng() * 4);
     for (let c = 0; c < chunks; c++) {
       const a = rng() * Math.PI * 2;
       const rad = size * (0.9 + rng() * 1.3);
       const sz = 1.2 + rng() * 3.4;
       debris.push(
         mat(
-          new THREE.Vector3(
-            p.x + Math.cos(a) * rad,
-            p.y + (rng() - 0.5) * size * 1.1,
-            p.z + Math.sin(a) * rad
-          ),
+          new THREE.Vector3(p.x + Math.cos(a) * rad, p.y + (rng() - 0.5) * size * 1.1, p.z + Math.sin(a) * rad),
           [rng() * 3, rng() * 3, rng() * 3],
           [sz, sz, sz]
         )
@@ -251,17 +276,27 @@ function buildDesert(route: RouteData<string>, seed: number): BuiltWorld {
     }
   }
 
-  // Dune mounds — now cleared by their own radius so they never cut
-  // through the walkway, and sunk so only the crest shows.
-  for (let i = 0; i < 100; i++) {
-    const t = i / 100;
+  // Small dunes right beside the road (baseHalf): only 2-5 units tall at
+  // the crest, so brushing one reads as "running through low dunes", not a
+  // wall. Sunk a little so it's a swell, not a lump.
+  for (let i = 0; i < 74; i++) {
+    const t = i / 74;
     const s = side(rng);
-    const r = 9 + rng() * 22;
-    const p = flank(route, t, s, 2 + rng() * 26, -r * 0.30, r);
+    const r = 5 + rng() * 6;
+    const p = flank(route, t, s, 0.5 + rng() * 5, -r * 0.15, r, 5.2);
+    dunes.push(mat(p, [0, rng() * Math.PI, 0], [r, r * 0.4, r * 1.25]));
+  }
+  // Big dunes — the layer behind. Cleared by their own radius via `flank`
+  // (ownRadius = r) and sunk deep, so a mound this size never reaches the
+  // walkway even on a tight bend.
+  for (let i = 0; i < 60; i++) {
+    const t = i / 60;
+    const s = side(rng);
+    const r = 13 + rng() * 20;
+    const p = flank(route, t, s, 2 + rng() * 14, -r * 0.35, r);
     dunes.push(mat(p, [0, rng() * Math.PI, 0], [r, r * 0.44, r * 1.25]));
   }
-  // A far ridge closing off the horizon, so the desert reads as vast
-  // rather than a strip of scenery beside the path.
+  // Far ridge closing the horizon.
   for (let i = 0; i < 46; i++) {
     const t = rng();
     const s = side(rng);
@@ -270,26 +305,71 @@ function buildDesert(route: RouteData<string>, seed: number): BuiltWorld {
     dunes.push(mat(p, [0, rng() * Math.PI, 0], [r, r * 0.5, r * 1.2]));
   }
 
-  // Mesas/buttes — flat-topped rock, a different silhouette from the
-  // smooth dunes and the pointed pyramids.
-  for (let i = 0; i < 26; i++) {
-    const t = i / 26 + rng() * 0.02;
+  // Mesas/buttes — flat-topped rock; some now close to the path.
+  for (let i = 0; i < 30; i++) {
+    const t = i / 30 + rng() * 0.02;
     const s = side(rng);
-    const r = 6 + rng() * 13;
-    const h = 12 + rng() * 26;
-    const p = flank(route, t, s, 14 + rng() * 70, h / 2 - 3, r);
+    const r = 5 + rng() * 12;
+    const h = 10 + rng() * 24;
+    const p = flank(route, t, s, 6 + rng() * 40, h / 2 - 3, r);
     mesas.push(mat(p, [0, rng() * Math.PI, 0], [r, h, r * (0.7 + rng() * 0.5)]));
   }
 
-  for (let i = 0; i < 90; i++) {
-    const t = i / 90;
+  // Weathered rocks/boulders — the main near-field filler. Mixed sizes,
+  // both sides, a chunk of them half-buried right at the path edge so the
+  // ground beside the walkway always has something on it.
+  for (let i = 0; i < 150; i++) {
+    const t = i / 150 + rng() * 0.004;
+    const s = side(rng);
+    const sz = 0.7 + rng() * 3.6;
+    const buried = rng() < 0.5;
+    const p = flank(route, t, s, rng() * 5, buried ? -sz * 0.45 : sz * 0.35, sz, 5.2);
+    rocks.push(mat(p, [rng() * 3, rng() * 3, rng() * 3], [sz, sz * (0.7 + rng() * 0.5), sz * (0.8 + rng() * 0.4)]));
+  }
+
+  // Standing stones — carved sandstone pillars right at the walkway edge,
+  // alternating sides, leaning slightly. A vertical rhythm as you run.
+  for (let i = 0; i < 56; i++) {
+    const t = i / 56 + rng() * 0.006;
+    const s: -1 | 1 = i % 2 === 0 ? -1 : 1;
+    const h = 3 + rng() * 7;
+    const w = 0.8 + rng() * 1.1;
+    const p = flank(route, t, s, 0.4 + rng() * 2.5, h / 2, w, 5.2);
+    stones.push(mat(p, [rng() * 0.22 - 0.11, rng() * Math.PI, rng() * 0.22 - 0.11], [w, h, w * (0.7 + rng() * 0.5)]));
+  }
+
+  // Oasis palms — taller than the cacti, a different green, a crown of
+  // fronds. Trunk + a flattened dome for the canopy.
+  for (let i = 0; i < 26; i++) {
+    const t = i / 26 + rng() * 0.01;
+    const s = side(rng);
+    const h = 5 + rng() * 5;
+    const p = flank(route, t, s, 1 + rng() * 5, h / 2, 1.4, 5.2);
+    const lean = rng() * 0.18 - 0.09;
+    palms.push(mat(p, [lean, rng() * Math.PI, lean * 0.6], [0.4, h, 0.4]));
+    const crownR = 2.2 + rng() * 1.4;
+    fronds.push(
+      mat(new THREE.Vector3(p.x + lean * h, p.y + h / 2, p.z), [rng() * 0.3, rng() * Math.PI, rng() * 0.3], [crownR, crownR * 0.5, crownR])
+    );
+  }
+
+  // Low rock arches / rib bones — half-sunk torus standing on end, a big
+  // dramatic silhouette the path passes under/beside a few times a lap.
+  for (let i = 0; i < 11; i++) {
+    const t = i / 11 + rng() * 0.03;
+    const s = side(rng);
+    const rad = 5 + rng() * 9;
+    const p = flank(route, t, s, 2 + rng() * 6, rad * 0.35, rad, 5.2);
+    arches.push(mat(p, [0, rng() * Math.PI, Math.PI / 2 + (rng() * 0.4 - 0.2)], [rad, rad, rad * 0.4]));
+  }
+
+  // Saguaro cacti — brought right up beside the road.
+  for (let i = 0; i < 110; i++) {
+    const t = i / 110;
     const s = side(rng);
     const h = 2.5 + rng() * 5;
-    // Stage 7: ownRadius 0.6 -> 1.3 to cover the saguaro arms that extend
-    // ~0.7-1.1 sideways from the trunk centre.
-    const p = flank(route, t, s, 2 + rng() * 12, h / 2, 1.3);
+    const p = flank(route, t, s, 1 + rng() * 5, h / 2, 1.3, 5.2);
     cacti.push(mat(p, [0, rng() * Math.PI, 0], [0.5, h, 0.5]));
-    // Arms, so they read as saguaro rather than posts.
     if (rng() < 0.6) {
       const armY = p.y + h * (0.1 + rng() * 0.25);
       const dir = rng() < 0.5 ? -1 : 1;
@@ -324,14 +404,44 @@ function buildDesert(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'mesas',
       geometry: G.cyl6,
-      toon: { color: '#c95f36', shadow: '#4a1230', rim: '#ffcf96', rimStrength: 0.55 },
+      toon: { color: '#b8502c', shadow: '#3a0e26', rim: '#ffcf96', rimStrength: 0.55 },
       matrices: mesas,
+    },
+    {
+      key: 'arches',
+      geometry: G.torusThick,
+      toon: { color: '#c25e30', shadow: '#421222', rim: '#ffd2a0', rimStrength: 0.6 },
+      matrices: arches,
     },
     {
       key: 'dunes',
       geometry: G.dome,
-      toon: { color: '#f0a85e', shadow: '#7a2f42', rim: '#ffe8c0', rimStrength: 0.45 },
+      toon: { color: '#eea866', shadow: '#8a4230', rim: '#ffe8c0', rimStrength: 0.4 },
       matrices: dunes,
+    },
+    {
+      key: 'stones',
+      geometry: G.box,
+      toon: { color: '#c98a56', shadow: '#4a2a1c', rim: '#ffe0b0', rimStrength: 0.45 },
+      matrices: stones,
+    },
+    {
+      key: 'rocks',
+      geometry: G.ico1,
+      toon: { color: '#a5653c', shadow: '#3a1c14', rim: '#ffcf96', rimStrength: 0.4 },
+      matrices: rocks,
+    },
+    {
+      key: 'palms',
+      geometry: G.cylTaper,
+      toon: { color: '#7a5a30', shadow: '#2c1e14', rim: '#e8d0a0', rimStrength: 0.4 },
+      matrices: palms,
+    },
+    {
+      key: 'fronds',
+      geometry: G.dome,
+      toon: { color: '#5aa04a', shadow: '#26402a', rim: '#d8ffb0', rimStrength: 0.5 },
+      matrices: fronds,
     },
     {
       key: 'cacti',
@@ -505,14 +615,14 @@ function buildOuter(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'shards',
       geometry: G.octa,
-      toon: { color: '#b06cff', shadow: '#2a1060', rim: '#f0d8ff', rimStrength: 0.8, emissive: 0.22 },
+      toon: { color: '#b06cff', shadow: '#2a1060', rim: '#f0d8ff', rimStrength: 0.8, emissive: 0.28 },
       matrices: shards,
       reactive: { drums: 0.5, mood: 0.3, event: 1.5 },
     },
     {
       key: 'rings',
       geometry: G.torusThick,
-      toon: { color: '#ff6ad5', shadow: '#3a0a52', rim: '#ffd0f4', rimStrength: 0.9, emissive: 0.3 },
+      toon: { color: '#ff6ad5', shadow: '#3a0a52', rim: '#ffd0f4', rimStrength: 0.9, emissive: 0.4 },
       matrices: rings,
       reactive: { drums: 0.6, event: 2.0 },
       animated: createSignatureEventAnimated(rings, ringIndices, ringBindings),
@@ -590,7 +700,7 @@ function buildPs2(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'lit',
       geometry: G.box,
-      toon: { color: '#ffcf7a', shadow: '#a05a2a', rim: '#fff0c8', rimStrength: 0.2, emissive: 0.5 },
+      toon: { color: '#ffcf7a', shadow: '#a05a2a', rim: '#fff0c8', rimStrength: 0.2, emissive: 0.6 },
       matrices: lit,
       reactive: { mood: 0.35, event: 1.0 },
     },
@@ -600,7 +710,7 @@ function buildPs2(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'lampHeads',
       geometry: G.sphere,
-      toon: { color: '#ffe0a0', shadow: '#a06a30', rim: '#fff6d8', rimStrength: 0.2, emissive: 0.5 },
+      toon: { color: '#ffe0a0', shadow: '#a06a30', rim: '#fff6d8', rimStrength: 0.2, emissive: 0.68 },
       matrices: lampHeads,
       reactive: { drums: 0.3, event: 1.2 },
       animated: createSignatureEventAnimated(lampHeads, lampHeadIndices, lampHeadBindings),
@@ -729,17 +839,15 @@ function buildVoid(route: RouteData<string>, seed: number): BuiltWorld {
     landmarkPositions.push(p.clone());
   }
 
-  // Stage 8 brightness pass: base emissive 0.6 -> 0.32. Every solid in
-  // this world is emissive and there are hundreds of them — at 0.6 the
-  // whole void was a field of glowing shapes with no dark to read them
-  // against. rimStrength 1.0 -> 0.7 for the same reason (a full-strength
-  // white rim on every edge).
+  // Stage 8: base emissive 0.6 -> 0.42 (was briefly 0.32, which read as
+  // flat/dead). Still down from the original so there's dark to read the
+  // shapes against. rim 1.0 -> 0.85.
   const neon = (color: string, shadow: string) => ({
     color,
     shadow,
     rim: '#ffffff',
-    rimStrength: 0.7,
-    emissive: 0.32,
+    rimStrength: 0.85,
+    emissive: 0.42,
   });
 
   // Rings rise and spin up during transform — "rings spin up" per the
@@ -786,7 +894,7 @@ function buildVoid(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'rings',
       geometry: G.torus,
-      toon: { color: '#8f5cff', shadow: '#1a0a3a', rim: '#ffffff', rimStrength: 0.7, emissive: 0.42 },
+      toon: { color: '#8f5cff', shadow: '#1a0a3a', rim: '#ffffff', rimStrength: 0.85, emissive: 0.55 },
       matrices: rings,
       reactive: { drums: 0.8, event: 2.6 },
       animated: createSignatureEventAnimated(rings, ringIndices, ringBindings),
@@ -900,7 +1008,7 @@ function buildCarnival(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'bulbs',
       geometry: G.sphere,
-      toon: { color: '#ffe07a', shadow: '#a04a20', rim: '#fff8e0', rimStrength: 0.2, emissive: 0.5 },
+      toon: { color: '#ffe07a', shadow: '#a04a20', rim: '#fff8e0', rimStrength: 0.2, emissive: 0.72 },
       matrices: bulbs,
       reactive: { drums: 0.8, event: 2.4 },
       animated: createSignatureEventAnimated(bulbs, bulbEventIndices, bulbBindings),
@@ -936,15 +1044,17 @@ export const WORLD_DEFINITIONS: WorldDefinition[] = [
     sky: {
       zenith: '#5a1150', mid: '#e0522a', horizon: '#ffc861',
       celestialColor: '#fff0b0', celestialDir: [0.1, 0.16, -0.95], celestialSize: 0.02, celestialHalo: 1.6,
-      bandMode: 1, bandLit: '#ff9a5a', bandDark: '#7a2440', bandStrength: 0.7, exposure: 1.05,
+      bandMode: 1, bandLit: '#ff9a5a', bandDark: '#7a2440', bandStrength: 0.7, exposure: 1.15,
     },
-    fog: { color: '#c86a48', near: 90, far: 400 },
+    fog: { color: '#d8825a', near: 75, far: 340 },
     ambient: { color: '#ffd0a0', intensity: 0.85 },
-    path: { halfWidth: 5.0, colorA: '#e8b878', colorB: '#b8794a', glow: '#fff0c0', style: 1 },
+    // Stage 8: warm packed-clay road, clearly darker/redder than the pale
+    // sand so the walkway reads instead of vanishing into it. Glowing kerb.
+    path: { halfWidth: 5.0, colorA: '#b86c3c', colorB: '#7a4526', glow: '#ffcf7a', style: 1 },
     particles: { color: '#ffe0b0', count: 200, size: 0.07, motion: 2, spread: 60, height: 20, opacity: 0.3 },
     outline: { width: 0.17, color: '#3a1020' },
     build: buildDesert,
-    obstacleKeys: ['pyramids', 'mesas'],
+    obstacleKeys: ['pyramids', 'mesas', 'arches', 'stones'],
   },
   {
     id: 'underwaterAbyssWorld',
