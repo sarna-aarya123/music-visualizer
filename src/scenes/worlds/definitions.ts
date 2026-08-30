@@ -36,15 +36,22 @@ function at(route: RouteData<string>, t: number) {
  *  just a few units beyond the corridor and so cut straight through the
  *  walkway.
  *
- *  Known residual (Stage 7 verification): `flank` offsets sideways from the
- *  route AT PARAMETER `t`, so on the inside of a tight hairpin the offset
- *  point can graze a slightly-later arc of the same closed loop. A handful
- *  of props per world (~1 mushroom stem, ~1 tree trunk, ~2 floating void
- *  solids, ~1 PS2 house) touch the walkway centreline by <1 unit this way.
- *  This has been true since the nine-world build, is independent of
- *  `ownRadius`/`extra`, and a correct fix needs a closest-point-on-curve
- *  placement solver — out of scope for this pass and higher regression
- *  risk than the symptom. Flagged in PLAN.md §11.6 for a dedicated pass. */
+ *  Stage 8 — self-clearance guard. `flank` offsets sideways from the route
+ *  AT PARAMETER `t`; on the inside of a tight bend that offset point can
+ *  land near a slightly-LATER arc of the same closed loop, so the prop
+ *  ends up on/over the walkway there even though it's correctly clear of
+ *  the route at `t`. After computing the point, this scans a narrow
+ *  t-window (±~2.5% of the loop — enough for one hairpin, never the far
+ *  side) and, for the closest arc it still intrudes on, pushes the point
+ *  directly AWAY from that arc's centre (`normalize(p - arcPoint)` in XZ —
+ *  an earlier attempt pushed along a fixed `right` axis, which on a
+ *  hairpin can shove the prop *toward* the offending arc; that was the
+ *  bug). The push is capped so a prop with a small `extra` can't be flung
+ *  far, and it never pulls the prop back across the corridor at `t`
+ *  (it started `extra` clear of it). No-op for the ~99% of props already
+ *  clear. Route generation / corridor radii are untouched — this is
+ *  placement only. */
+const SELF_CLEAR_MARGIN = 2.5;
 function flank(
   route: RouteData<string>,
   t: number,
@@ -54,10 +61,39 @@ function flank(
   ownRadius = 0
 ): THREE.Vector3 {
   const { f, r } = at(route, t);
-  return f.position
+  const p = f.position
     .clone()
     .addScaledVector(f.right, side * (r + ownRadius + extra))
     .addScaledVector(f.up, lift);
+
+  // Window kept deliberately narrow (~±3% of the loop): wide enough for a
+  // hairpin, and NOT wide enough to start "seeing" genuinely distant arcs
+  // — pushing a prop away from a far arc can shove it toward a third one.
+  let deficit = 0;
+  let dirX = 0;
+  let dirZ = 0;
+  for (let k = -13; k <= 13; k++) {
+    if (k >= -1 && k <= 1) continue; // the placement arc itself
+    const s = at(route, t + k * 0.0022);
+    const dx = p.x - s.f.position.x;
+    const dz = p.z - s.f.position.z;
+    const dist = Math.hypot(dx, dz);
+    const need = s.r + ownRadius + SELF_CLEAR_MARGIN;
+    if (dist < need && dist > 1e-3) {
+      const d = need - dist;
+      if (d > deficit) {
+        deficit = d;
+        dirX = dx / dist;
+        dirZ = dz / dist;
+      }
+    }
+  }
+  if (deficit > 0) {
+    const push = Math.min(deficit, extra * 0.85 + 3);
+    p.x += dirX * push;
+    p.z += dirZ * push;
+  }
+  return p;
 }
 
 function side(rng: Rng): -1 | 1 {
@@ -154,7 +190,7 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'windows',
       geometry: G.box,
-      toon: { color: '#ffc46a', shadow: '#8a4a2a', rim: '#fff0c0', rimStrength: 0.3, emissive: 0.5 },
+      toon: { color: '#ffc46a', shadow: '#8a4a2a', rim: '#fff0c0', rimStrength: 0.3, emissive: 0.4 },
       matrices: windows,
       reactive: { mood: 0.4, drums: 0.3, event: 1.4 },
       animated: createSignatureEventAnimated(windows, eventWindowIndices, windowBindings),
@@ -162,7 +198,7 @@ function buildCyberpunk(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'signs',
       geometry: G.box,
-      toon: { color: '#ff3fa8', shadow: '#5a1050', rim: '#ffd0ee', rimStrength: 0.5, emissive: 0.7 },
+      toon: { color: '#ff3fa8', shadow: '#5a1050', rim: '#ffd0ee', rimStrength: 0.5, emissive: 0.5 },
       matrices: signs,
       reactive: { drums: 0.6, event: 1.8 },
     },
@@ -469,14 +505,14 @@ function buildOuter(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'shards',
       geometry: G.octa,
-      toon: { color: '#b06cff', shadow: '#2a1060', rim: '#f0d8ff', rimStrength: 0.8, emissive: 0.3 },
+      toon: { color: '#b06cff', shadow: '#2a1060', rim: '#f0d8ff', rimStrength: 0.8, emissive: 0.22 },
       matrices: shards,
       reactive: { drums: 0.5, mood: 0.3, event: 1.5 },
     },
     {
       key: 'rings',
       geometry: G.torusThick,
-      toon: { color: '#ff6ad5', shadow: '#3a0a52', rim: '#ffd0f4', rimStrength: 0.9, emissive: 0.45 },
+      toon: { color: '#ff6ad5', shadow: '#3a0a52', rim: '#ffd0f4', rimStrength: 0.9, emissive: 0.3 },
       matrices: rings,
       reactive: { drums: 0.6, event: 2.0 },
       animated: createSignatureEventAnimated(rings, ringIndices, ringBindings),
@@ -554,7 +590,7 @@ function buildPs2(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'lit',
       geometry: G.box,
-      toon: { color: '#ffcf7a', shadow: '#a05a2a', rim: '#fff0c8', rimStrength: 0.2, emissive: 0.7 },
+      toon: { color: '#ffcf7a', shadow: '#a05a2a', rim: '#fff0c8', rimStrength: 0.2, emissive: 0.5 },
       matrices: lit,
       reactive: { mood: 0.35, event: 1.0 },
     },
@@ -564,7 +600,7 @@ function buildPs2(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'lampHeads',
       geometry: G.sphere,
-      toon: { color: '#ffe0a0', shadow: '#a06a30', rim: '#fff6d8', rimStrength: 0.2, emissive: 0.9 },
+      toon: { color: '#ffe0a0', shadow: '#a06a30', rim: '#fff6d8', rimStrength: 0.2, emissive: 0.5 },
       matrices: lampHeads,
       reactive: { drums: 0.3, event: 1.2 },
       animated: createSignatureEventAnimated(lampHeads, lampHeadIndices, lampHeadBindings),
@@ -693,12 +729,17 @@ function buildVoid(route: RouteData<string>, seed: number): BuiltWorld {
     landmarkPositions.push(p.clone());
   }
 
+  // Stage 8 brightness pass: base emissive 0.6 -> 0.32. Every solid in
+  // this world is emissive and there are hundreds of them — at 0.6 the
+  // whole void was a field of glowing shapes with no dark to read them
+  // against. rimStrength 1.0 -> 0.7 for the same reason (a full-strength
+  // white rim on every edge).
   const neon = (color: string, shadow: string) => ({
     color,
     shadow,
     rim: '#ffffff',
-    rimStrength: 1.0,
-    emissive: 0.6,
+    rimStrength: 0.7,
+    emissive: 0.32,
   });
 
   // Rings rise and spin up during transform — "rings spin up" per the
@@ -745,7 +786,7 @@ function buildVoid(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'rings',
       geometry: G.torus,
-      toon: { color: '#8f5cff', shadow: '#1a0a3a', rim: '#ffffff', rimStrength: 1.0, emissive: 0.8 },
+      toon: { color: '#8f5cff', shadow: '#1a0a3a', rim: '#ffffff', rimStrength: 0.7, emissive: 0.42 },
       matrices: rings,
       reactive: { drums: 0.8, event: 2.6 },
       animated: createSignatureEventAnimated(rings, ringIndices, ringBindings),
@@ -859,7 +900,7 @@ function buildCarnival(route: RouteData<string>, seed: number): BuiltWorld {
     {
       key: 'bulbs',
       geometry: G.sphere,
-      toon: { color: '#ffe07a', shadow: '#a04a20', rim: '#fff8e0', rimStrength: 0.2, emissive: 1.0 },
+      toon: { color: '#ffe07a', shadow: '#a04a20', rim: '#fff8e0', rimStrength: 0.2, emissive: 0.5 },
       matrices: bulbs,
       reactive: { drums: 0.8, event: 2.4 },
       animated: createSignatureEventAnimated(bulbs, bulbEventIndices, bulbBindings),

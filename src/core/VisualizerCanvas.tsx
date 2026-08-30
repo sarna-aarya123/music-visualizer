@@ -52,14 +52,15 @@ function PostFX() {
     const majorEnvelope = getMajorEventEnvelope();
 
     if (bloomRef.current) {
-      // Event term cut from *4.5 to *1.7 and the whole thing clamped, so a
-      // drop lifts bloom to roughly 1.5x the loud-section level rather than
-      // ~3x it. Raising luminanceThreshold alongside it means the extra
-      // bloom lands only on true highlights — mid-tones (the readable part
-      // of the scene) stop blooming as the event peaks.
-      const raw = 0.5 + featureFrame.energy * 1.3 + pulse.current * 0.7 + majorEnvelope * 1.7;
-      bloomRef.current.intensity = Math.min(raw, 3.1);
-      bloomRef.current.luminanceThreshold = 0.22 + majorEnvelope * 0.16;
+      // Stage 8 brightness pass: base intensity and the event term both cut
+      // again, and — the big lever — `luminanceThreshold` raised to 0.34
+      // (from 0.22) so bloom only catches genuine highlights. At 0.22 the
+      // neon-grid path floors of Cyberpunk / Outer / Void bloomed edge to
+      // edge into a solid glowing slab even at rest. Mid-tones (the
+      // readable part of every scene) no longer bloom.
+      const raw = 0.4 + featureFrame.energy * 1.05 + pulse.current * 0.55 + majorEnvelope * 1.4;
+      bloomRef.current.intensity = Math.min(raw, 2.5);
+      bloomRef.current.luminanceThreshold = 0.34 + majorEnvelope * 0.1;
     }
     if (vignetteRef.current) {
       // Floor raised 0.15 -> 0.45: the frame always keeps a visible edge
@@ -76,8 +77,8 @@ function PostFX() {
     <EffectComposer multisampling={0}>
       <Bloom
         ref={bloomRef}
-        intensity={0.5}
-        luminanceThreshold={0.22}
+        intensity={0.4}
+        luminanceThreshold={0.34}
         luminanceSmoothing={0.6}
         mipmapBlur
       />

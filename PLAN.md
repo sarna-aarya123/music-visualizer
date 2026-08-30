@@ -1616,12 +1616,80 @@ sequence 20s after the first is **entirely suppressed** (blend 0 all
 phases), re-engaging only once 30s has passed. Not verified by eye: the
 calmer beat impulses in motion, and the 30s gap between two real drops.
 
+### Camera pass 3 + brightness + clipping (2026-08-30)
+
+Passes 1-2 still weren't enough — the user reported the cinematic cut
+"looks at the side view when the character isn't even in the frame", the
+maps are still too bright, and the character still clips solids. This pass:
+
+**Camera — cinematic cuts and the sequence camera are BOTH switched OFF.**
+- `cinematicDirector.ts`: `CINEMATIC_CUTS_ENABLED = false`. `stepCinematicDirector`
+  still consumes the major-event id (no backlog on re-enable) but never
+  calls `startShot`, so `cinematicState.shot` stays `'gameplay'` and
+  `getCinematicBlend()` is always 0.
+- `cameraShots.ts`: `SEQUENCE_CAMERA_ENABLED = false`. `getSequenceCameraShot`
+  returns 0 unconditionally (idle-edge tracker kept current for a clean
+  re-enable).
+- The camera is now purely the third-person chase cam. The FOV punch,
+  forward surge, `altitudeDive` and (pass-2-halved) beat impulses still
+  react to the music — those keep the camera *behind the character*, they
+  don't reposition it. All the cinematic machinery (shot table, blend
+  envelope, cooldown, no-landmark gating) is intact and dormant for a
+  future, deliberate re-enable.
+
+**Brightness — the bright worlds toned down (visually confirmed):**
+- `VisualizerCanvas`: bloom `luminanceThreshold` **0.22 → 0.34** (the big
+  lever — at 0.22 the neon-grid floors bloomed edge to edge). Base
+  intensity 0.5 → 0.4, event term and clamp both cut.
+- `WorldPath` style-2 (neon grid — Cyberpunk / Outer / Void): the additive
+  grid term reached `~uColorA * 3.8` at an intersection; now clamped to
+  `uColorA * 0.7` so the lines read as bright lines on a dark deck, not a
+  light source.
+- `definitions.ts` emissive floors on the bright worlds cut: Void solids
+  0.6 → 0.32 (+ rim 1.0 → 0.7), Void rings 0.8 → 0.42, Carnival bulbs
+  1.0 → 0.5, PS2 lampHeads 0.9 → 0.5 / lit 0.7 → 0.5, Cyberpunk signs
+  0.7 → 0.5 / windows 0.5 → 0.4, Outer shards 0.3 → 0.22 / rings
+  0.45 → 0.3.
+- **Confirmed by eye:** Cyberpunk / Outer Dimension / Abstract Void floors
+  went from a blinding white slab to a readable teal/purple surface with
+  visible grid lines; cel shading on the character is legible again. The
+  dark worlds (Abyss / Forest / Carnival) were not touched this pass —
+  brightening those is the opposite job (drafted Step 1).
+
+**Clipping — `flank()` self-clearance guard (this time done right):**
+- After computing the offset point, scan a narrow t-window (`k` ∈ ±13 ×
+  0.0022 ≈ ±3% of the loop) and, for the closest neighbouring arc the
+  point still intrudes on, push it **directly away from that arc's centre**
+  (`normalize(p - arcPoint)` in XZ). The Stage-7 attempt that was rejected
+  pushed along a fixed `right` axis — on a hairpin that can shove a prop
+  *toward* the offending arc. Push capped (`extra*0.85 + 3`); window
+  deliberately narrow so it can't "see" distant arcs and over-correct
+  (verified: widening it to ±6% made one Void solid *worse*).
+  `SELF_CLEAR_MARGIN` 2.5.
+- Floating Islands `worldGenerator.ts`: near-islands pushed out
+  (`corridorRadius + radius*0.95 + 5`, was `*0.75 + 2`) and dropped lower
+  (`6 + rng()*8`, was `3 + rng()*7`); sakura clustered toward island
+  centre (`0.12-0.6` of the radius, was `0.25-0.85`) so rim trees no
+  longer reach the walkway.
+- **Headless before/after vs `b7ee9c7`** (bundled the real builders, run
+  under Node): every group the metric flagged as a real intrusion (near-
+  face > 0.4u past the centreline) is fixed — Forest crystals −0.19→+3.5,
+  stems −0.2→+2.4, trunks −0.25→+6.9; Void cyan −1.85→+5.2, magenta
+  −1.7→+5.6; PS2 houses +0.3→+6.6; Floating Islands sakura canopy
+  −2.85→+9.5. No regressions on any previously-clear group. One residual:
+  Void `gold` (one small tetrahedron) still −0.74 — unchanged from
+  `b7ee9c7`, not a regression, in the most abstract "solids in black
+  space" world; the guard's narrow window can't reach the arc it grazes
+  without over-correcting others. World build time ~7ms/world (measured).
+
 ### Still open (feeds the rest of Stage 8)
 
-- Brightness: Cyberpunk / Outer / Void neon-grid floors are blown out even
-  at rest; Abyss / Forest / Carnival are too dark; the character is a
-  silhouette in ~6 of 9 worlds. `<ambientLight>` in `WorldScene` is inert
-  (all props use custom shaders with a hardcoded light dir). This is Step 1
-  of the drafted plan and the user's stated next priority.
+- Dark worlds (Abyss / Forest / Carnival) and the still-dark character in
+  a few worlds — brightening those, plus the inert `<ambientLight>`
+  situation, is drafted Step 1.
 - Floating Islands walkway railings cut diagonally across the deck on
   curves (`Walkway.tsx` chord-vs-arc) — geometry cleanup, Step 4.
+- Not verified by eye (audio transport stalls on a background OS window):
+  the calmer beat impulses in motion. The cinematic systems being fully
+  off is verified (headless: `getSequenceCameraShot` returns 0 every
+  phase; the cut flag is a plain `if (!flag) return`).
