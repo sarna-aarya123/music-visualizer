@@ -25,10 +25,17 @@ every one of the 9 worlds having its own signature event, Stage 6's
 character-first cinematic-anchor fix, and — Stage 7 — an effect-brightness
 readability rebalance, a cinematic-camera environment-clearance pass, a
 character/prop intersection fix, and the planned launch/glide/landing-
-shockwave character ability). Stage 8 onward (variety/history/weighted
-selection, the deferred background/distant events, anything requiring
-genuinely new geometry) has **not** started and needs approval before
-work resumes.
+shockwave character ability). **Stage 8** has NOT formally started — a
+6-step plan is drafted and unapproved — but one targeted fix the user
+asked for directly has landed: **camera pass 1** (`PLAN.md` §12) —
+cinematic cuts now fire ONLY on a major event (the landmark-proximity,
+district-transition and standalone-drop triggers are gone — they were
+firing every few seconds and staring at the environment), and the
+major-event sequence camera no longer "pans into nothing" (character-
+anchored when there's no landmark worth framing). Remaining Stage 8 work
+(brightness normalization across all 9 worlds, camera collision, per-world
+geometry cleanup, continuous music-reactivity, character presence) is not
+started and needs approval.
 
 ---
 
@@ -161,7 +168,7 @@ The folder name is a leftover misnomer. It contains no world any more:
 | `world/worldEvents.ts` | Stage 5: the "world event executor" — four pure, zero-allocation per-instance transform functions (`riseLike`/`spinUp`/`scatterReform`, ten archetype names mapped onto them) plus `createSignatureEventAnimated(...)`, which each world's `build()` calls to turn a `PropGroup` into one whose flagged instances play out that world's own `EventBinding[]` data across the sequence's phases. No rendering — only `OutlinedInstances` (via the returned `AnimatedInstances`) and `floatingIslands/Islands.tsx`'s own hand-rolled update ever call `setMatrixAt`. Stage 7: `scatterReform` (the one evaluator that moves instances *laterally*) now documents that a binding's `scatterRadius` must stay within the participating instances' own route clearance — enforced by binding-author index selection, since this file has no route data. |
 | `shared/cameraObstacles.ts` | Stage 7: derives coarse bounding spheres from a world's already-computed instance matrices (`obstaclesFromMatrices` / `collectObstacles`), fed to `WorldBase.cameraObstacles` and consumed by `CameraRig`'s cinematic-camera clearance pass. NOT collision, NOT corridor-clearance — a camera-only "don't sail a moving shot through that building" hint. |
 | `world/rhythmState.ts` | `drumPresence`, `energyTrend`. |
-| `world/cinematicDirector.ts` | Shot types, selection priority, blend envelope, shot transforms. |
+| `world/cinematicDirector.ts` | Shot types, blend envelope, shot transforms. **Stage 8 pass 1:** the only trigger for a cut is now a major event (`impactEventId`); the old landmark-proximity / district-transition / standalone-drop tiers are gone. Every cut is a character shot. |
 | `world/{camera,character}MotionState.ts`, `groundImpactState.ts` | Cross-system singletons. |
 | `world/seededRandom.ts` | mulberry32 — deterministic world generation. |
 
@@ -423,7 +430,12 @@ state (2026-08-28): Stages 0-6 done and committed —
   of `'landmark'`. See `PLAN.md` §10 for the full diagnosis, exact
   per-phase weights, and verification results.
 
-Nothing beyond Stage 7 (Stage 8's variety/history/weighted selection,
-Stage A pre-analysis, the deferred background/distant event layer) is
-started or approved. **Do not start coding further stages without explicit
-go-ahead.**
+Beyond Stage 7, only **Stage 8 camera pass 1** has landed (`PLAN.md` §12,
+a user-directed fix): cinematic cuts fire ONLY on a major event now, and
+the sequence camera is character-anchored when there's no landmark to
+frame. This continues Stage 6's direction — it does not regress it.
+Everything else in the drafted Stage 8 plan (brightness normalization,
+camera collision, per-world geometry cleanup, continuous music-reactivity,
+character presence/progression), Stage A pre-analysis, and the deferred
+background/distant event layer is not started or approved. **Do not start
+coding further stages without explicit go-ahead.**

@@ -1,25 +1,35 @@
 import * as THREE from 'three';
 import type { AudioFeatureFrame } from '../../../audio/types';
-import { consumeDrop, consumeEvent, createBeatConsumerState } from '../../../audio/beatConsumer';
+import { consumeEvent, createBeatConsumerState } from '../../../audio/beatConsumer';
 import { majorEventState } from './musicEventDirector';
 
 /**
  * Directs occasional cinematic camera cuts on top of the stable third-
  * person gameplay camera — a music-video editor, not a second source of
  * constant camera motion. The gameplay camera (CameraRig.tsx) stays the
- * default; this only ever decides WHEN and WHICH short cut happens, gated
- * by real events (never a random timer) and a minimum gap between cuts so
- * shot changes stay special rather than constant.
+ * default; this only ever decides WHEN and WHICH short cut happens.
  *
- * Multi-environment architecture: this file is genuinely environment-
- * agnostic — it used to take a cyberpunk-specific `WorldLayout` just to dig
- * `reactorRings`/`giantSpires` out of it, and a cyberpunk-specific
- * `District` union for the district-transition shot. Both are now generic
- * (a plain `THREE.Vector3[]` of landmark positions, and a plain `string`
- * district/region name) so any environment's CameraRig call can drive the
- * exact same cinematic system — see scenes/shared/environment.ts's
- * `WorldBase`. Zero change to WHEN/WHICH shots fire, only to what type of
- * value those decisions are keyed off.
+ * Phase 6 Stage 8 — "follow the protagonist, reveal the world only when
+ * the music truly earns it." Cuts now fire on ONE thing: a major event
+ * (`majorEventState.impactEventId` — the rare, ~13s coordinated
+ * drop/transform sequence). The old landmark-proximity and district-
+ * transition tiers were removed: they triggered on POSITION alone (every
+ * time the character ran past a landmark or crossed a district), with a
+ * 4.5s floor, so a cut was firing roughly every few seconds and — because
+ * they preferred the `'landmark'` shot — the camera was pointed at the
+ * environment instead of the character most of the time. A plain `dropId`
+ * that never escalates to a major event no longer cuts either: it still
+ * drives every gameplay-camera impulse (FOV punch, forward burst, speed),
+ * which is plenty for a beat that isn't a genuine "moment". When a cut
+ * does fire it is always a CHARACTER-focused framing; a nearby landmark
+ * only nudges which character shot is chosen so it sits as a backdrop,
+ * never a landmark-only shot.
+ *
+ * Multi-environment architecture: still environment-agnostic — landmark
+ * positions are a plain `THREE.Vector3[]`, the district is a plain string.
+ * The `district`/`frame` params are kept on `stepCinematicDirector` so
+ * `CameraRig`'s call site is unchanged, even though only `landmarks` is
+ * read now.
  */
 
 export type ShotType =
@@ -47,30 +57,21 @@ export const cinematicState: CinematicState = {
   targetPosition: new THREE.Vector3(),
 };
 
-const MIN_GAP = 4.5;
-const LANDMARK_TRIGGER_DIST = 55;
-
-/** District/region name -> the establishing shot that most naturally suits
- *  it — everything else falls back to a generic wide shot. A plain string
- *  key so any environment's own district/region names can be added here
- *  (cyberpunk's below, Fantasy Forest's added alongside them once its
- *  region names exist) without this file needing to know which
- *  environment is currently active. */
-const DISTRICT_SHOT: Partial<Record<string, ShotType>> = {
-  bridge: 'sideTracking',
-  tunnel: 'lowAngle',
-  canyon: 'overhead',
-};
+/** A floor between cuts. With cuts now firing only on a major event —
+ *  themselves ≥13s apart (a sequence's own length) — this never actually
+ *  binds, but it's kept as a hard guarantee that two cuts can't stack. */
+const MIN_GAP = 6;
+/** A landmark within this distance when a major event lands is close
+ *  enough to sit as a backdrop behind a character shot — it only nudges
+ *  WHICH character shot is picked, never triggers a landmark-only one. */
+const LANDMARK_BACKDROP_DIST = 45;
 
 let lastShotEndTime = -999;
-let lastDistrict: string | null = null;
-let lastLandmarkKey: string | null = null;
 /** Which shot type played last — purely for variety (never gates WHETHER
  *  a cut happens, only WHICH shot is picked once one is already
  *  warranted), so consecutive cuts don't repeat the same framing. */
 let lastShotType: ShotType | null = null;
 
-const dropConsumer = createBeatConsumerState();
 const majorConsumer = createBeatConsumerState();
 
 function startShot(shot: ShotType, duration: number, target?: THREE.Vector3): void {
@@ -120,6 +121,11 @@ export function stepCinematicDirector(
   district: string,
   landmarks: THREE.Vector3[]
 ): void {
+  // `frame`/`district` are unused now (see the file header) — kept so
+  // CameraRig's call site doesn't change.
+  void frame;
+  void district;
+
   cinematicState.shotTime += dt;
 
   if (cinematicState.shot !== 'gameplay' && cinematicState.shotTime > cinematicState.shotDuration) {
@@ -128,80 +134,36 @@ export function stepCinematicDirector(
   }
 
   const cooldownOk = elapsed - lastShotEndTime > MIN_GAP;
-  if (cinematicState.shot !== 'gameplay' || !cooldownOk) {
-    lastDistrict = district;
-    return;
-  }
+  if (cinematicState.shot !== 'gameplay' || !cooldownOk) return;
 
-  // Priority: major event > drop > landmark proximity > district transition
-  // — unchanged. Variety only decides WHICH shot within whatever tier
-  // already fired, via pickVaried, never whether/how often a cut happens.
+  // The ONLY trigger: a major event. This is the rare, coordinated
+  // drop/transform moment — the one time it "really makes sense" to leave
+  // the chase camera. The cut is always CHARACTER-focused; a landmark
+  // that happens to be right here only picks which character shot so it
+  // reads as a backdrop, never a landmark-only shot (that framing, when
+  // there's genuinely something to reveal, is the sequence camera's
+  // `reveal` phase — see cameraShots.ts).
   const majorHit = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorConsumer);
   if (majorHit > 0) {
-    // Phase 6 Stage 6: this cut lands right at the drop, which is also
-    // where Stage 3's long-form sequence begins — per the user's brief,
-    // the character (not the landmark) should be the default subject
-    // there, with 'landmark' kept only as an occasional variety pick
-    // rather than the preferred choice `pickVaried` reaches for first.
-    // Selection WEIGHTING only — the shot types themselves, their
-    // durations, and every other branch (regular drops, landmark
-    // proximity, district transitions) are unchanged.
-    const nearest = findNearestLandmark(characterPos, landmarks, LANDMARK_TRIGGER_DIST * 1.5);
-    const shot = nearest
-      ? pickVaried('dramaticClose', ['frontFacing', 'landmark'])
+    const backdrop = findNearestLandmark(characterPos, landmarks, LANDMARK_BACKDROP_DIST) !== null;
+    const shot = backdrop
+      ? pickVaried('sideTracking', ['dramaticClose', 'frontFacing'])
       : pickVaried('dramaticClose', ['frontFacing', 'lowAngle']);
-    startShot(shot, shot === 'landmark' ? 3.2 : 3.0, nearest ?? undefined);
-    lastDistrict = district;
-    return;
+    startShot(shot, 3.0);
   }
-
-  const dropHit = consumeDrop(frame, dropConsumer);
-  if (dropHit > 0) {
-    const nearest = findNearestLandmark(characterPos, landmarks, LANDMARK_TRIGGER_DIST * 1.5);
-    const shot = nearest
-      ? pickVaried('landmark', ['sideTracking', 'frontFacing'])
-      : pickVaried('wideEstablishing', ['overhead', 'frontFacing']);
-    startShot(shot, shot === 'landmark' ? 3.0 : 2.8, nearest ?? undefined);
-    lastDistrict = district;
-    return;
-  }
-
-  const nearestLandmark = findNearestLandmark(characterPos, landmarks, LANDMARK_TRIGGER_DIST);
-  if (nearestLandmark) {
-    const key = `${nearestLandmark.x.toFixed(0)},${nearestLandmark.z.toFixed(0)}`;
-    if (key !== lastLandmarkKey) {
-      const shot = pickVaried('landmark', ['frontFacing', 'sideTracking']);
-      startShot(shot, 2.6, nearestLandmark);
-      lastLandmarkKey = key;
-      lastDistrict = district;
-      return;
-    }
-  } else {
-    lastLandmarkKey = null;
-  }
-
-  if (lastDistrict !== null && district !== lastDistrict) {
-    const preferred = DISTRICT_SHOT[district] ?? 'wideEstablishing';
-    const shot = pickVaried(preferred, ['frontFacing', 'wideEstablishing']);
-    startShot(shot, 2.2);
-  }
-  lastDistrict = district;
 }
 
 /** Clears any in-flight cinematic shot back to gameplay and forgets the
- *  previous track's cut-cooldown/district/landmark memory — called on a
- *  new track load or a seek, so the camera doesn't stay locked into a cut
- *  aimed at wherever the previous playback position was. */
+ *  previous track's cut-cooldown memory — called on a new track load or a
+ *  seek, so the camera doesn't stay locked into a cut aimed at wherever
+ *  the previous playback position was. */
 export function resetCinematicDirector(): void {
   cinematicState.shot = 'gameplay';
   cinematicState.shotTime = 0;
   cinematicState.shotDuration = 0;
   cinematicState.targetPosition.set(0, 0, 0);
   lastShotEndTime = -999;
-  lastDistrict = null;
-  lastLandmarkKey = null;
   lastShotType = null;
-  dropConsumer.lastId = -1;
   majorConsumer.lastId = -1;
 }
 
