@@ -1568,6 +1568,54 @@ track). `reveal` then pointed the camera 70% toward that empty point.
   biases toward it, peaking 17.5u during `reveal`, returning to ~3.5u by
   `aftermath` — bounded, not a swing into the sky.
 
+### Camera pass 2 (2026-08-30) — "the camera belongs behind the character"
+
+Pass 1 killed the landmark/district cuts but the user reported the camera
+was **still** moving too much: the ~13s major-event *sequence* camera fired
+on **every** major event (they can be ~13s apart in an energetic track),
+and per-beat camera impulses added constant wobble. Pass 2:
+
+**`cameraShots.ts` — the sequence camera is now brief and rate-limited:**
+- Only `drop` + `transform` have a `SHOT_TABLE` entry (~3.5s). `buildup` /
+  `tension` / `reveal` / `aftermath` return blend 0 → **plain chase
+  camera**. The world still transforms and the lighting/FOV still spike;
+  the camera just stays home for all but ~3.5s of the sequence.
+- **`CINEMATIC_COOLDOWN = 30s`**: engages at most once per 30s regardless
+  of how often major events fire. Edge-checked when the sequence leaves
+  `idle`; if inside the cooldown the whole sequence is suppressed
+  (`suppressedThisSequence`).
+- Both remaining specs are small and close (`drop` push 13→8u, `transform`
+  orbit r=11) — near the normal follow distance, not 30-46u back — and
+  character-anchored. `elapsed` is now threaded through
+  `WorldDirector.getSequenceCameraShot` → `CameraRig` passes
+  `state.clock.elapsedTime`.
+
+**`cinematicDirector.ts`:** `MIN_GAP` 6 → 30, matching the sequence-camera
+cooldown so the 3s cut and the brief sequence move fire together on one
+major event, then both go quiet for 30s.
+
+**`CameraRig.tsx` — the chase cam is planted, not choreographed:**
+- All beat-impulse multipliers roughly halved (`applyImpulse`: forward
+  0.9→0.5, vertical 0.7→0.38, rotational 1.4/0.7→0.6/0.3, fov 9→5, lateral
+  1.1→0.5). A strong beat makes the chase cam *breathe*, not lurch.
+- `pickImpulseKind` reweighted so the framing-swinging kinds are rare:
+  rotational 24%→7%, lateral 8%→3%; forward/vertical/fov take the rest.
+- Drop's sideways vertical bump halved (0.6→0.3); the major-event
+  look-target swing cut hard (`majorHit*1.6` → `*0.55`) since the cut
+  already handles a major event's framing change.
+
+**Verification.** `tsc -b` / `build` clean. Preview composited frames but
+the audio transport stalls on a background OS window so a full continuous
+playthrough (needed to *watch* the 30s cooldown between two drops) was not
+possible — burst playback showed the chase cam recovering to behind the
+character within ~3s of the cold-start major event, and holding chase
+through normal running. **Headless check** of `getSequenceCameraShot`
+confirms: engages only on `drop`+`transform` (every other phase = chase,
+blend 0), camera stays ≤13u from the character (was 30-46u), and a second
+sequence 20s after the first is **entirely suppressed** (blend 0 all
+phases), re-engaging only once 30s has passed. Not verified by eye: the
+calmer beat impulses in motion, and the 30s gap between two real drops.
+
 ### Still open (feeds the rest of Stage 8)
 
 - Brightness: Cyberpunk / Outer / Void neon-grid floors are blown out even
@@ -1575,8 +1623,5 @@ track). `reveal` then pointed the camera 70% toward that empty point.
   silhouette in ~6 of 9 worlds. `<ambientLight>` in `WorldScene` is inert
   (all props use custom shaders with a hardcoded light dir). This is Step 1
   of the drafted plan and the user's stated next priority.
-- Whether the ~13s major-event sequence camera itself should be shorter /
-  engage only around `drop`+`transform` — deferred pending the user
-  seeing this pass.
 - Floating Islands walkway railings cut diagonally across the deck on
   curves (`Walkway.tsx` chord-vs-arc) — geometry cleanup, Step 4.
