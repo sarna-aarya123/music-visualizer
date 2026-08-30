@@ -398,6 +398,14 @@ state (2026-08-28): Stages 0-6 done and committed —
   arms-wide/forward-pitch pose) on the strongest (drop-caused, ≥0.82)
   events, with the landing `groundImpact` shockwave now scaled by launch
   intensity. See `PLAN.md` §11 for the full write-up and verification.
+  **A 2026-08-29 verification/polish follow-up** (the browser preview
+  still can't composite frames, so verification was headless-numerical:
+  camera-clearance push math, before/after prop-clearance vs `1e38320`,
+  glide state machine — all pass) reverted one thing: the Fantasy Forest
+  `crystals` `flank()` tweak in `46c373c` had nudged one hairpin-inside
+  crystal marginally worse, so it's back to the pre-Stage-7 placement.
+  Visual *appearance* of all four fixes remains unverified — see
+  `PLAN.md` §11.5/§11.6.
 
 - **Stage 6:** fixed the cinematic camera's environment-over-character
   bias — redefined by the user from the original "background/distant

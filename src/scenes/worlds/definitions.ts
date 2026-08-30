@@ -34,7 +34,17 @@ function at(route: RouteData<string>, t: number) {
  *  that was a real bug: large props (desert dunes up to 27 units across,
  *  forest mushroom caps, carnival tents) were positioned by their CENTRE
  *  just a few units beyond the corridor and so cut straight through the
- *  walkway. */
+ *  walkway.
+ *
+ *  Known residual (Stage 7 verification): `flank` offsets sideways from the
+ *  route AT PARAMETER `t`, so on the inside of a tight hairpin the offset
+ *  point can graze a slightly-later arc of the same closed loop. A handful
+ *  of props per world (~1 mushroom stem, ~1 tree trunk, ~2 floating void
+ *  solids, ~1 PS2 house) touch the walkway centreline by <1 unit this way.
+ *  This has been true since the nine-world build, is independent of
+ *  `ownRadius`/`extra`, and a correct fix needs a closest-point-on-curve
+ *  placement solver — out of scope for this pass and higher regression
+ *  risk than the symptom. Flagged in PLAN.md §11.6 for a dedicated pass. */
 function flank(
   route: RouteData<string>,
   t: number,
@@ -611,8 +621,14 @@ function buildForest(route: RouteData<string>, seed: number): BuiltWorld {
     const t = i / 100;
     const s = side(rng);
     const h = 1 + rng() * 4;
-    // Stage 7: account for the crystal's own radius (h*0.3) in the clearance.
-    const p = flank(route, t, s, 3 + rng() * 9, h * 0.4, h * 0.3);
+    // Stage 7 note: an earlier Stage 7 tweak here (adding ownRadius h*0.3 +
+    // bumping `extra`) pushed one hairpin-inside crystal marginally closer
+    // to the walkway rather than further — crystals are tiny (footprint
+    // <=1.5) so `ownRadius` was cosmetic here anyway. Reverted to the
+    // pre-Stage-7 placement, which is bit-identical to what shipped in
+    // Stages 5/6; the residual sub-unit hairpin graze is the known
+    // `flank` limitation documented above.
+    const p = flank(route, t, s, 2 + rng() * 10, h * 0.4);
     crystals.push(mat(p, [rng() * 0.4 - 0.2, rng() * Math.PI, rng() * 0.4 - 0.2], [h * 0.3, h, h * 0.3]));
   }
 

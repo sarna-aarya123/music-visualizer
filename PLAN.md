@@ -685,15 +685,19 @@ Summary:
 - **Character/prop intersection** — diagnosis: the character rigidly
   follows the route centreline and never deviates, so it can only visibly
   clip something placed at/near the centreline or moved there by an
-  event. Six `flank()` call sites (abyss columns/coral, outer shards,
-  forest crystals, PS2 trunk-canopies, desert cacti) passed `ownRadius`
-  0/too-small for the prop's true size, leaving near faces on the corridor
-  edge — each given its real radius + a slightly larger base margin.
-  Abstract Void's `SCATTER_REFORM` (`scatterRadius: 14` on cyan solids
-  based as little as 4 units past the corridor edge) was the one genuine
-  event-driven intrusion — now restricted to comfortably-clear instances,
-  reach pulled to 10, drama shifted vertical. `routeGenerator.ts` +
-  clearance math: zero diff.
+  event. Five `flank()` call sites (abyss columns/coral, outer shards, PS2
+  trunk-canopies, desert cacti) passed `ownRadius` 0/too-small for the
+  prop's true size, leaving near faces on the corridor edge — each given
+  its real radius + a slightly larger base margin (a sixth, forest
+  crystals, was tried and reverted in the §11.5 verification pass — see
+  §11.6). Headless before/after vs `1e38320` confirms these **improve**
+  every targeted group with **no new intrusion**. Abstract Void's
+  `SCATTER_REFORM` (`scatterRadius: 14` on cyan solids based as little as
+  4 units past the corridor edge) was the one genuine event-driven
+  intrusion — now restricted to comfortably-clear instances, reach pulled
+  to 10, drama shifted vertical. `routeGenerator.ts` + clearance math:
+  zero diff. A handful of pre-existing hairpin-graze props (~6 total,
+  since the nine-world build, not touched by Stage 7) remain — §11.6.
 - **Character ability** — the planned launch → glide → landing shockwave,
   built entirely on the existing major-event jump lifecycle in
   `Character.tsx` (no new system, no new director). A `'glide'` jump phase
@@ -1185,7 +1189,7 @@ unless explicitly asked, stop after Stage 6 for review before Stage 7.
 
 ---
 
-## 11. Stage 7 — Readability + spatial-collision polish + character ability — DONE (2026-08-28)
+## 11. Stage 7 — Readability + spatial-collision polish + character ability — DONE (2026-08-28; verification/polish 2026-08-29)
 
 Four changes, in the priority order the user set (route reliability >
 character movement > cinematic intent > no visual intersections > smooth
@@ -1296,16 +1300,19 @@ prop at `corridorRadius + ownRadius + extra` from the centreline, and
 correctly-placed static prop can actually intersect the character.** Two
 real gaps:
 
-1. **`ownRadius` omitted / too small** at six `flank()` call sites, so a
-   prop's *near face* landed on or just inside the corridor edge — a
-   leaning column / crystal / shard right at the visible path edge reads
-   as "the character clipped it" in the foreshortened third-person view
-   even though centres never met. Fixed by passing each prop's real
-   radius and bumping the base margin: abyss `columns` (`+2.5`), abyss
-   `coral` (`+h*0.5`), outer `shards` (`+h*0.22`), forest `crystals`
-   (`+h*0.3`), PS2 trunk-`canopies` (trunk ownRadius `2.8 → 3.6` to cover
-   the wider canopy above it), desert `cacti` (`0.6 → 1.3` for the
-   saguaro arms). RNG call order/count in each expression is unchanged, so
+1. **`ownRadius` omitted / too small** at several `flank()` call sites, so
+   a prop's *near face* landed on or just inside the corridor edge — a
+   leaning column / shard right at the visible path edge reads as "the
+   character clipped it" in the foreshortened third-person view even
+   though centres never met. Fixed by passing each prop's real radius and
+   bumping the base margin: abyss `columns` (`+2.5`), abyss `coral`
+   (`+h*0.5`), outer `shards` (`+h*0.22`), PS2 trunk-`canopies` (trunk
+   ownRadius `2.8 → 3.6` to cover the wider canopy above it), desert
+   `cacti` (`0.6 → 1.3` for the saguaro arms). Fantasy Forest `crystals`
+   was also changed in `46c373c` but **reverted** in the verification
+   pass — the tweak nudged one hairpin-inside crystal marginally worse,
+   and crystals are too small (footprint ≤1.5) for `ownRadius` to matter
+   (§11.5/§11.6). RNG call order/count in each expression is unchanged, so
    world geometry stays deterministic.
 
 2. **Abstract Void `SCATTER_REFORM`** — the one genuine event-driven
@@ -1360,55 +1367,121 @@ moments so it stays special.
 
 ### 11.5 Verification
 
-- **`npx tsc -b` clean. `npm run build` clean** (738 modules, no errors).
-- **All 9 worlds cycled** via the environment switcher (11 switches,
-  exercising every world's mount + unmount/dispose path with the new
-  `cameraObstacles` collection and the rebalanced emissive loop) — **zero
-  console errors, zero window errors**.
-- **Full synthetic-track playthrough** (12s WAV: 3s quiet → 5s loud
-  bass-heavy drop with kick pulses → 4s breakdown, injected via a
-  simulated `DragEvent` on `.upload-panel`) played to its **natural end
-  and auto-reset to 0:00** — zero console errors / window errors /
-  unhandled rejections across the drop and breakdown regions (where the
-  major-event sequence, emissive clamps, camera-clearance pass and glide
-  state machine all execute).
-- **Restart, mid-track seek (via the transport range input), and
-  world-switch while a track was loaded and playing** — all zero errors;
-  the `resetToken → WorldDirector.reset()` and remount paths ran clean.
-- **NOT visually verified.** The in-tool browser preview pane never
-  composited frames this session — `document.hidden` was `true` on the
-  tab throughout (the known, pre-existing limitation documented in
-  `HANDOFF.md` §2 and every prior stage's write-up), which also throttles
-  the `useFrame` loop so a sequence can't be watched progress in real
-  time. So the actual *look* of the rebalanced brightness, the camera
-  clearance corrections, the tightened prop placement, and the glide pose
-  have **not** been seen — only proven to build, type-check, mount/unmount
-  cleanly, and run a full track error-free. A screenshot pass from the
-  user (or a future session where the preview composites) is needed to
-  confirm: (1) major effects still read as dramatic but no longer blind;
-  (2) environment/character/landmark readability during a drop; (3) cel
-  value separation preserved; (4) the cinematic camera no longer clips
-  towers/trees/pyramids/wheels and its corrections look smooth; (5) the
-  character no longer visibly passes through clearly-solid props in any
-  world; (6) the glide reads as a glide.
+**Two passes.** The first (commit `46c373c`, 2026-08-28) got `tsc`/`build`
+clean, a 9-world mount/unmount sweep, and a full synthetic-track
+playthrough (all zero-error) but **could not verify anything visual** —
+the browser preview pane never composited frames. The second pass
+(2026-08-29, this commit) confirmed the preview is *still* non-compositing
+(`requestAnimationFrame` fired **0 times in 3 s** on the hidden tab — the
+per-frame loop is fully paused, not just throttled), so instead did a
+**headless numerical verification** of the geometry- and math-dependent
+fixes by bundling the actual world/route/obstacle code with `esbuild` and
+running it under Node, plus a before/after diff against the pre-Stage-7
+commit `1e38320`.
+
+**Static / error checks (both passes):**
+- `npx tsc -b` clean, `npm run build` clean (738 modules).
+- All 9 worlds cycled via the switcher (11–12 switches) — every world's
+  mount + unmount/dispose path exercised with the new `cameraObstacles`
+  collection (`collectObstacles`/`obstaclesFromMatrices`), the FI
+  `generateFloatingIslandsWorld` change, the rebalanced emissive loop, and
+  the new `CameraRig`/`Character` refs. **Zero console/window errors.**
+- Synthetic track load → play → restart → mid-track seek → world-switch
+  while loaded: **zero errors** (`resetToken → WorldDirector.reset()` and
+  the `trackGeneration` remount paths run clean). Playback does not
+  *advance* on a hidden tab, so a full sequence still can't be watched.
+
+**Headless numerical verification (second pass):**
+- **Fix 2 (camera clearance) — PASS.** Ported the exact `CameraRig`
+  clearance block + `obstaclesFromMatrices` and drove it with each world's
+  real obstacle list: (a) obstacle spheres generate with sane radii per
+  world (2–20, cap respected; Abstract Void correctly empty); (b) a camera
+  point inside an obstacle is pushed to exactly `radius + CAMERA_CLEARANCE`;
+  (c) the eased correction moves ≤~1.25 u/frame at its steepest and its
+  tail settles **monotonically** to <1e-7 u/frame — smooth, no snap, no
+  jitter; (d) two overlapping r=20 spheres accumulate a push well under
+  the 16-u clamp; (e) with no obstacle a large residual offset decays to
+  0.0000 within 2 s (no stuck correction when a shot ends); (f) the
+  ground-floor term lifts a sub-surface shot to `routeY + 2.5`.
+- **Fix 3 (character/prop) — before/after vs `1e38320`.** Measured, per
+  world, every ground-level prop group's minimum near-face gap to the
+  character's centreline path (dense route sampling, char-height overlap
+  filter). Stage 7's `flank()` clearance changes **improved** every group
+  they targeted — Underwater Abyss columns 5.6→7.2, coral 4.2→5.5,
+  Desert cacti 7.6→8.1 — and left the rest ≥8 u clear. **Zero new
+  intrusions.** This pass **found and fixed one regression the first pass
+  introduced**: Fantasy Forest `crystals` had been given `ownRadius`+bumped
+  `extra` in `46c373c`, which pushed one hairpin-inside crystal from a
+  −0.19 u graze to −0.66 u (worse, because pushing an inside-of-bend prop
+  *outward* moves it toward the arc that curves back). Reverted that one
+  line to the pre-Stage-7 form (bit-identical to Stages 5/6); all other
+  Fix-3 changes kept.
+- **Fix 4 (glide) — PASS.** Ported the jump state machine and stepped it:
+  a weak major event (0.78) → plain `anticipation→air→land`, no glide,
+  1 landing; a drop-caused event (0.90) → `…→air→glide(exactly 0.60 s at
+  the apex)→air→land`, 1 landing (no double-fire, `hasGlided` guard
+  holds); the boundary (0.82) correctly does **not** glide (strict `>`);
+  landing-shockwave strength = `2.6 + intensity·2.4` (≈4.4–5.0, up from a
+  flat 2.6 pre-Stage-7) and scales with intensity as intended.
+- **Fix 1 (brightness) — formula-checked only.** The clamps are pure
+  arithmetic on `getMajorEventEnvelope()`: at a full drop bloom lands at
+  ~2.98 (clamp 3.1) ≈ 2× the loud-no-event level (was ~14× the base
+  pre-Stage-7); vignette floor 0.45; emissive event term ≤1.1 and total
+  ≤1.7; rim event boost 1.5× (was 2.1×); sky white-mix ≤0.16. The
+  *arithmetic* does what §11.1 claims. Whether the result still **looks**
+  dramatic / not washed out / keeps cel value separation and saturation
+  is an aesthetic judgement that genuinely needs eyes — see below.
+
+**Stage 6 preservation — confirmed by inspection.** `cameraShots.ts` and
+`cinematicDirector.ts` are **not in the Stage 7 commit's file list** —
+byte-for-byte untouched. The per-phase `pivotWeight`/`lookWeight` table
+(character-anchored 0.15–0.35 everywhere, `reveal` the landmark-heavy
+outlier at 0.7) is intact. Stage 7's `CameraRig` clearance block runs
+*after* the shot's position/look-at composition and only nudges position
+out of obstacle spheres (typically 0.5–3 u vs 20–48 u shot distances), so
+it cannot meaningfully re-frame away from the character.
+
+**Still NOT verified — needs a working preview / screenshots:** the
+actual on-screen *appearance* of all four fixes. Specifically: (1) major
+drops still read as powerful, not flat, and not blinding; (2)
+character / environment / landmark readability and cel two-band
+separation during a drop; (3) colours still saturated; (4) the cinematic
+camera visibly clears trees/buildings/pyramids/wheels in a real shot and
+the correction looks natural, not like an invisible wall; (5) no *visible*
+character-through-solid clipping in motion across multiple worlds; (6) the
+glide reads as a glide; (7) FPS during gameplay / an active world event /
+an active cinematic sequence (could not be sampled — rAF paused).
 
 ### 11.6 Known limitations / follow-ups
 
+- **Visual appearance of Stage 7 is unverified** (see 11.5). Every check
+  that a hidden, non-compositing tab permits has passed; nothing has been
+  *seen*.
+- **Pre-existing hairpin-graze props (NOT a Stage 7 regression).** `flank()`
+  offsets sideways from the route at parameter `t`; on the inside of a
+  tight bend that point can graze a slightly-later arc of the same closed
+  loop. ~6 instances total across the nine worlds sit ≤~2 u inside the
+  centreline this way — Fantasy Forest 1 mushroom stem (−0.2) + 1 tree
+  trunk (−0.25) + 1 crystal (−0.19); Abstract Void 1 each of cyan
+  (−1.85) / magenta (−1.73) / gold (−0.74) small floating solids; PS2
+  Night 1 house at +0.29 (just outside). All present since the nine-world
+  build, unchanged by Stage 7 (confirmed by the before/after diff). A
+  correct fix needs a closest-point-on-curve placement solver in `flank`;
+  a quick "scan a t-window and push out" guard was prototyped this pass
+  and **rejected** — it destabilised well-clear props in 5 worlds because
+  a single-axis outward push can move a prop *toward* the offending arc.
+  Documented in `definitions.ts`'s `flank` doc comment; worth a dedicated
+  pass, out of scope here.
 - **Camera obstacle spheres are coarse.** A single bounding sphere
   under-covers tall thin props (a tower is a sphere at its mid-height, not
-  a capsule) and over-covers wide ones (capped at radius 20). It's tuned
-  to catch the jarring "shot flies through the building" case, not to be
-  geometrically exact. A vertical-capsule model would be the natural
-  upgrade if a specific clip is ever reported.
+  a capsule) and over-covers wide ones (capped at radius 20). Tuned to
+  catch the jarring "shot flies through the building" case, not to be
+  geometrically exact. A vertical-capsule model is the natural upgrade if
+  a specific clip is ever reported.
 - **`scatterReform` still has no route awareness.** The corridor-clearance
   constraint on `SCATTER_REFORM` bindings lives in the binding author's
   index selection (documented in `worldEvents.ts`), not enforced in code.
   Fine for the one binding that uses it; revisit if more are added.
-- **Glide only spot-checked structurally** (state machine + build + error-
-  free playthrough), not watched. If the ~0.6s hang feels too long/short
-  or the pose too subtle, `GLIDE_DURATION` / `glide*` pose weights are the
-  knobs.
-- **Per-world visual pass outstanding** for the brightness rebalance —
-  the clamp values (emissive 1.1/1.7, bloom 3.1, etc.) are a first
-  calibration; some worlds lean harder on emissive than others and may
-  want per-world tuning once seen.
+- **Per-world brightness tuning outstanding.** The clamp values (emissive
+  1.1/1.7, bloom 3.1, etc.) are a first calibration; some worlds lean
+  harder on emissive than others and may want per-world tuning once seen.
