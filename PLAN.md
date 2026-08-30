@@ -1485,3 +1485,98 @@ an active cinematic sequence (could not be sampled — rAF paused).
 - **Per-world brightness tuning outstanding.** The clamp values (emissive
   1.1/1.7, bloom 3.1, etc.) are a first calibration; some worlds lean
   harder on emissive than others and may want per-world tuning once seen.
+
+---
+
+## 12. Stage 8 — camera pass 1: "follow the protagonist" (2026-08-29)
+
+**Not the full Stage 8.** A Stage 8 plan (6 steps: brightness normalization,
+character-first camera, camera collision, per-world geometry cleanup,
+continuous music‑reactivity, character presence/progression) was drafted
+and is **not yet approved**. This commit is one targeted fix the user
+asked for directly after watching the current build: the cinematic camera
+was on the environment far too much, and its shots "panned into nothing —
+into the centre, where nothing is."
+
+### Root cause (found in code + confirmed visually this session)
+
+`cinematicDirector.ts` had four trigger tiers: major event > drop >
+**landmark proximity** > **district transition**. The bottom two fire on
+POSITION alone — every time the character runs past a landmark
+(`key !== lastLandmarkKey`, within 55u) or crosses a district boundary —
+with only a 4.5s floor between cuts. The route passes a landmark / changes
+district every few seconds, so a cut was firing almost constantly, and
+both tiers preferred the `'landmark'` shot (which looks at the landmark,
+not the character). Observed directly at idle with no music: the camera
+cut to a pagoda / a house / an asteroid field on Floating Islands / PS2 /
+Outer Dimension within seconds of loading.
+
+The "pan into nothing": `cameraShots.ts` (the ~13s major-event sequence
+camera) locked its framing target to the nearest landmark within **90u**,
+or — if none — to **a point 40 units ahead down the route** (empty
+track). `reveal` then pointed the camera 70% toward that empty point.
+
+### What changed (2 files, no protected system touched)
+
+**`cinematicDirector.ts`:**
+- Removed the landmark-proximity and district-transition tiers entirely,
+  plus the standalone `dropId` tier. A plain drop that never escalates to
+  a major event no longer cuts — it still drives every gameplay-camera
+  impulse (FOV punch, forward burst, speed), which is enough.
+- **Cuts now fire on ONE thing: a major event** (`impactEventId` — the
+  rare ~13s coordinated sequence, itself ≥13s apart). `MIN_GAP` 4.5 → 6
+  (a stacking guard; never binds now).
+- The cut is always a **character** shot (`dramaticClose` / `frontFacing`
+  / `lowAngle` / `sideTracking`). A landmark within 45u only nudges which
+  character shot (so it sits as a backdrop) — never a landmark-only shot.
+- Removed `consumeDrop`, `DISTRICT_SHOT`, `lastDistrict`, `lastLandmarkKey`,
+  `dropConsumer` and their resets. `stepCinematicDirector`'s signature is
+  unchanged (`frame`/`district` now unused) so `CameraRig` is untouched.
+
+**`cameraShots.ts`:**
+- No-landmark case: the locked target is now the **character**, not a
+  blank point down the route. A new `sequenceHasLandmark` flag gates every
+  phase's pivot/look weights to ≤0.08 when there's nothing to frame — the
+  whole sequence stays a dynamic move framed on the character.
+- `MAX_TARGET_DIST` 90 → 60 (only lock onto a landmark that's genuinely
+  close/visible when the drop lands).
+- Shot distances pulled in ~25-30% from Stage 4's originals (buildup push
+  46→32, reveal push out 48→32, transform sweep excursion cut ~40%,
+  aftermath orbit 30→20) so the character stays a clear subject through
+  the move. `reveal` lookWeight 0.7 → 0.5. Stage 6's low pivot/look
+  weights are otherwise intact.
+
+### Verification
+
+- `npx tsc -b` + `npm run build` clean.
+- **Visual (preview composited frames this session):** at idle with no
+  music, the camera holds a clean third-person chase on the character and
+  **stays there** — confirmed 10s+ on Floating Islands, and on Cyberpunk
+  Night and Outer Dimension after switching. Before this change every one
+  of those cut to an environment landmark shot within seconds. First-person
+  confirmed unaffected.
+- **Could NOT watch a full major-event sequence** — the browser renders
+  (rAF 60fps) but the audio transport clock stalls on a background OS
+  window, so playback only advances in short bursts and the ~13s sequence
+  never plays through. Single seeked-in frames showed the character
+  reasonably framed, not panning into space.
+- **Headless numerical check** of `getSequenceCameraShot` (esbuild-bundled,
+  run under Node): with no landmark near, the look-target sits **0.0u from
+  the character** in every phase (was ~28-40u toward empty track);
+  camera position 12-29u from the character (a dynamic move, character
+  always the subject). With a real landmark 34u away, the look-target
+  biases toward it, peaking 17.5u during `reveal`, returning to ~3.5u by
+  `aftermath` — bounded, not a swing into the sky.
+
+### Still open (feeds the rest of Stage 8)
+
+- Brightness: Cyberpunk / Outer / Void neon-grid floors are blown out even
+  at rest; Abyss / Forest / Carnival are too dark; the character is a
+  silhouette in ~6 of 9 worlds. `<ambientLight>` in `WorldScene` is inert
+  (all props use custom shaders with a hardcoded light dir). This is Step 1
+  of the drafted plan and the user's stated next priority.
+- Whether the ~13s major-event sequence camera itself should be shorter /
+  engage only around `drop`+`transform` — deferred pending the user
+  seeing this pass.
+- Floating Islands walkway railings cut diagonally across the deck on
+  curves (`Walkway.tsx` chord-vs-arc) — geometry cleanup, Step 4.

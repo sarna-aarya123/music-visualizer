@@ -18,15 +18,21 @@ import type { MajorEventPhase, MajorEventState } from './musicEventDirector';
  * directly — it decides how this weight composes with everything else
  * (mode blend, the existing cinematicDirector cut) and applies the result.
  *
- * Target: locked once per sequence (the nearest landmark to the character
- * at the moment the sequence starts, or a point ahead along the route if
- * none is close) rather than re-picked every frame — the shot math treats
- * `target` as a fixed point for the whole ~13s sequence, so a nearest-
- * landmark search that could flip mid-sequence as the character runs past
- * would make every primitive's framing jump. Locking is edge-triggered off
- * `MajorEventState.phase` leaving `'idle'`, and cleared by
- * `resetSequenceCameraShot()` (called from `WorldDirector.reset()`) on
- * seek/new-track, matching this project's established reset pattern.
+ * Target: locked once per sequence — the nearest landmark to the
+ * character at the moment the sequence starts, IF one is genuinely close
+ * (`MAX_TARGET_DIST`). Locking is edge-triggered off `MajorEventState.phase`
+ * leaving `'idle'`, and cleared by `resetSequenceCameraShot()` (called
+ * from `WorldDirector.reset()`) on seek/new-track.
+ *
+ * Phase 6 Stage 8 — "don't pan into nothing." If there is no landmark
+ * close enough to be worth framing, the locked target is the CHARACTER
+ * (not, as before, an arbitrary point 40 units ahead down an empty
+ * stretch of route — that's what made reveal/transform swing the camera
+ * toward blank space "in the middle of nowhere"), and every phase's
+ * pivot/look weights are forced near-zero so the whole sequence is a
+ * dynamic move that stays framed on the character. The landmark-heavy
+ * `reveal` framing only happens when `sequenceHasLandmark` — i.e. when
+ * there is actually something there to reveal.
  *
  * Zero per-frame allocation in the hot path: every vector below is a
  * module-level scratch object mutated in place (`.copy()`/
@@ -90,22 +96,29 @@ function ease(t: number): number {
  *  reference) while the look-at swings mostly toward the landmark being
  *  revealed. Aftermath: pivot and look both swing back toward the
  *  character — "attention returns to them" as the sequence winds down. */
+// Phase 6 Stage 8: distances pulled in ~25-30% from Stage 4's originals so
+// the character stays a clear, present subject through the whole move (a
+// 46-unit trailing push made them a speck). Pivot/look weights stay low
+// (Stage 6) and are further gated to near-zero when there's no real
+// landmark (the `gate()` helper in getSequenceCameraShot). `reveal` keeps
+// the one deliberately landmark-leaning look, but only when
+// `sequenceHasLandmark`.
 const SHOT_TABLE: Partial<Record<MajorEventPhase, ShotSpec>> = {
-  buildup: { kind: 'push', distStart: 46, distEnd: 27, height: 11, lateral: 9, pivotWeight: 0.2, lookWeight: 0.15 },
-  tension: { kind: 'orbit', radius: 25, height: 9, angleStart: 0.5, angleSpan: 0.65, pivotWeight: 0.15, lookWeight: 0.2 },
-  drop: { kind: 'push', distStart: 20, distEnd: 12, height: 6, lateral: -4, pivotWeight: 0.3, lookWeight: 0.25 },
+  buildup: { kind: 'push', distStart: 32, distEnd: 22, height: 9, lateral: 7, pivotWeight: 0.18, lookWeight: 0.12 },
+  tension: { kind: 'orbit', radius: 19, height: 8, angleStart: 0.5, angleSpan: 0.6, pivotWeight: 0.14, lookWeight: 0.16 },
+  drop: { kind: 'push', distStart: 15, distEnd: 10, height: 5, lateral: -3, pivotWeight: 0.25, lookWeight: 0.2 },
   transform: {
     kind: 'sweep',
-    alongStart: -34,
-    alongEnd: 30,
-    lateralStart: -22,
-    lateralEnd: 20,
-    height: 16,
-    pivotWeight: 0.35,
-    lookWeight: 0.3,
+    alongStart: -22,
+    alongEnd: 18,
+    lateralStart: -13,
+    lateralEnd: 12,
+    height: 12,
+    pivotWeight: 0.3,
+    lookWeight: 0.24,
   },
-  reveal: { kind: 'push', distStart: 22, distEnd: 48, height: 14, lateral: -12, pivotWeight: 0.25, lookWeight: 0.7 },
-  aftermath: { kind: 'orbit', radius: 30, height: 12, angleStart: -0.3, angleSpan: 0.4, pivotWeight: 0.15, lookWeight: 0.1 },
+  reveal: { kind: 'push', distStart: 18, distEnd: 32, height: 12, lateral: -9, pivotWeight: 0.22, lookWeight: 0.5 },
+  aftermath: { kind: 'orbit', radius: 20, height: 10, angleStart: -0.3, angleSpan: 0.4, pivotWeight: 0.14, lookWeight: 0.1 },
 };
 
 const NEXT_PHASE: Partial<Record<MajorEventPhase, MajorEventPhase>> = {
@@ -124,15 +137,19 @@ const TRANSITION_TIME = 0.35;
 /** Fraction of `buildup` spent easing the whole shot system in from
  *  nothing, and of `aftermath` spent easing it back out to nothing. */
 const FADE_FRACTION = 0.6;
-/** Landmarks farther than this from the character when a sequence starts
- *  aren't a sensible thing to frame — falls back to a point ahead along
- *  the route instead. */
-const MAX_TARGET_DIST = 90;
-const FALLBACK_AHEAD_DIST = 40;
+/** A landmark farther than this from the character when the sequence
+ *  starts isn't worth framing — the sequence stays purely on the
+ *  character instead (Stage 8: tightened from 90, and the old
+ *  "point 40 units ahead" fallback is gone). */
+const MAX_TARGET_DIST = 60;
+/** Pivot/look weight ceiling when there's no real landmark to frame —
+ *  effectively pins every phase to the character. */
+const NO_LANDMARK_WEIGHT_CAP = 0.08;
 
 // --- Locked per-sequence target -------------------------------------
 const lockedTarget = new THREE.Vector3();
 let hasLockedTarget = false;
+let sequenceHasLandmark = false;
 let wasIdle = true;
 
 function findNearestLandmark(pos: THREE.Vector3, landmarks: THREE.Vector3[], maxDist: number): THREE.Vector3 | null {
@@ -155,6 +172,7 @@ function findNearestLandmark(pos: THREE.Vector3, landmarks: THREE.Vector3[], max
 export function resetSequenceCameraShot(): void {
   lockedTarget.set(0, 0, 0);
   hasLockedTarget = false;
+  sequenceHasLandmark = false;
   wasIdle = true;
 }
 
@@ -170,6 +188,8 @@ function evaluateShot(
   progress: number,
   characterPos: THREE.Vector3,
   target: THREE.Vector3,
+  pivotW: number,
+  lookW: number,
   tangent: THREE.Vector3,
   right: THREE.Vector3,
   up: THREE.Vector3,
@@ -182,9 +202,10 @@ function evaluateShot(
   // file-level comment. Decoupling the two is what lets `reveal` keep
   // the character legible as a foreground/scale reference (low
   // pivotWeight) while still swinging the look-at mostly onto the
-  // landmark being revealed (high lookWeight).
-  scratchPivot.copy(characterPos).lerp(target, spec.pivotWeight);
-  scratchLookPoint.copy(characterPos).lerp(target, spec.lookWeight);
+  // landmark being revealed (high lookWeight). `pivotW`/`lookW` are the
+  // spec's weights AFTER the no-landmark gate (Stage 8).
+  scratchPivot.copy(characterPos).lerp(target, pivotW);
+  scratchLookPoint.copy(characterPos).lerp(target, lookW);
   switch (spec.kind) {
     case 'push': {
       const dist = THREE.MathUtils.lerp(spec.distStart, spec.distEnd, t);
@@ -238,13 +259,17 @@ export function getSequenceCameraShot(
   const isIdle = seq.phase === 'idle';
 
   // Edge-triggered lock: the instant the sequence leaves 'idle', pick and
-  // freeze a target for its whole duration.
+  // freeze a target for its whole duration. Stage 8: if no landmark is
+  // genuinely close, the target IS the character — never a blank point
+  // down the route — and `sequenceHasLandmark` gates the weights below.
   if (wasIdle && !isIdle) {
     const nearest = findNearestLandmark(characterPos, landmarks, MAX_TARGET_DIST);
     if (nearest) {
       lockedTarget.copy(nearest);
+      sequenceHasLandmark = true;
     } else {
-      lockedTarget.copy(characterPos).addScaledVector(tangent, FALLBACK_AHEAD_DIST);
+      lockedTarget.copy(characterPos);
+      sequenceHasLandmark = false;
     }
     hasLockedTarget = true;
   }
@@ -258,7 +283,23 @@ export function getSequenceCameraShot(
   const duration = phaseDurations[seq.phase as Exclude<MajorEventPhase, 'idle'>];
   const progress = duration > 0 ? THREE.MathUtils.clamp(seq.phaseTime / duration, 0, 1) : 1;
 
-  evaluateShot(spec, progress, characterPos, lockedTarget, tangent, right, up, outPosition, outLook);
+  // No-landmark gate: pin every phase to the character when there's
+  // nothing worth framing.
+  const gate = (w: number) => (sequenceHasLandmark ? w : Math.min(w, NO_LANDMARK_WEIGHT_CAP));
+
+  evaluateShot(
+    spec,
+    progress,
+    characterPos,
+    lockedTarget,
+    gate(spec.pivotWeight),
+    gate(spec.lookWeight),
+    tangent,
+    right,
+    up,
+    outPosition,
+    outLook
+  );
 
   // Cross-fade toward the next phase's shot (at its own progress 0) in the
   // last TRANSITION_TIME seconds of this one, so no phase boundary snaps.
@@ -267,7 +308,19 @@ export function getSequenceCameraShot(
   if (nextPhase && timeLeft < TRANSITION_TIME) {
     const nextSpec = SHOT_TABLE[nextPhase];
     if (nextSpec) {
-      evaluateShot(nextSpec, 0, characterPos, lockedTarget, tangent, right, up, nextPos, nextLook);
+      evaluateShot(
+        nextSpec,
+        0,
+        characterPos,
+        lockedTarget,
+        gate(nextSpec.pivotWeight),
+        gate(nextSpec.lookWeight),
+        tangent,
+        right,
+        up,
+        nextPos,
+        nextLook
+      );
       const mix = ease(1 - timeLeft / TRANSITION_TIME);
       outPosition.lerp(nextPos, mix);
       outLook.lerp(nextLook, mix);
