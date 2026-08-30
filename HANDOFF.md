@@ -25,25 +25,34 @@ every one of the 9 worlds having its own signature event, Stage 6's
 character-first cinematic-anchor fix, and — Stage 7 — an effect-brightness
 readability rebalance, a cinematic-camera environment-clearance pass, a
 character/prop intersection fix, and the planned launch/glide/landing-
-shockwave character ability). **Stage 8** has NOT formally started — a
-6-step plan is drafted and unapproved — but a user-directed **camera pass**
-has landed over two commits (`PLAN.md` §12):
-- **Pass 1:** cinematic cuts fire ONLY on a major event (the
-  landmark-proximity / district-transition / standalone-drop triggers are
-  gone — they fired every few seconds and stared at the environment); the
-  sequence camera no longer "pans into nothing" (character-anchored when
-  no landmark is worth framing).
-- **Pass 2:** the major-event *sequence* camera is now brief (only the
-  `drop`+`transform` window, ~3.5s — every other phase is the plain chase
-  cam) and rate-limited (`CINEMATIC_COOLDOWN` 30s, so it can't fire on
-  every drop); its shots pulled in close to the follow distance. The
-  `cinematicDirector` cut got the same 30s gap. Per-beat camera impulses
-  in `CameraRig` roughly halved and the framing-swinging kinds made rare —
-  the chase cam is planted, a beat makes it breathe not lurch.
+shockwave character ability). **Stage 8** has NOT formally started — a 6-step plan is drafted and
+unapproved — but user-directed fixes have landed over several commits
+(`PLAN.md` §12):
+- **Camera:** cinematic cuts (`cinematicDirector.ts`) AND the major-event
+  sequence camera (`cameraShots.ts`) are **both switched OFF** via
+  `CINEMATIC_CUTS_ENABLED` / `SEQUENCE_CAMERA_ENABLED = false` after
+  several rounds of the user reporting the camera still moved "randomly"
+  off the character. The camera is now purely the third-person chase cam;
+  FOV punch / forward surge / `altitudeDive` / (halved) beat impulses
+  still react to the music but only ever keep the camera behind the
+  character. All the cinematic machinery is intact and dormant.
+- **Brightness:** the three neon-grid worlds (Cyberpunk / Outer / Void)
+  toned down — bloom `luminanceThreshold` 0.22 → 0.34, the style-2 path
+  grid additive term clamped, emissive floors on the bright worlds cut
+  (Void 0.6→0.32, Carnival bulbs 1.0→0.5, etc.). Confirmed by eye: floors
+  went from a blinding slab to a readable surface. The DARK worlds (Abyss
+  / Forest / Carnival) still need the opposite treatment.
+- **Clipping:** `flank()` now has a self-clearance guard that pushes a
+  hairpin-inside prop directly away from the neighbouring arc it grazes;
+  Floating Islands near-islands pushed further out + lower and their
+  sakura clustered toward the island centre. Headless before/after
+  confirms every real intrusion fixed (Forest / Void / PS2 / FI trees),
+  no regressions, one sub-unit residual in Abstract Void.
 
-Remaining Stage 8 work (brightness normalization across all 9 worlds,
-camera collision, per-world geometry cleanup, continuous music-reactivity,
-character presence) is not started and needs approval.
+Remaining Stage 8 work (brightening the DARK worlds + character
+readability, camera collision, per-world geometry cleanup incl. FI
+railings, continuous music-reactivity, character presence) is not started
+and needs approval.
 
 ---
 
@@ -176,8 +185,8 @@ The folder name is a leftover misnomer. It contains no world any more:
 | `world/worldEvents.ts` | Stage 5: the "world event executor" — four pure, zero-allocation per-instance transform functions (`riseLike`/`spinUp`/`scatterReform`, ten archetype names mapped onto them) plus `createSignatureEventAnimated(...)`, which each world's `build()` calls to turn a `PropGroup` into one whose flagged instances play out that world's own `EventBinding[]` data across the sequence's phases. No rendering — only `OutlinedInstances` (via the returned `AnimatedInstances`) and `floatingIslands/Islands.tsx`'s own hand-rolled update ever call `setMatrixAt`. Stage 7: `scatterReform` (the one evaluator that moves instances *laterally*) now documents that a binding's `scatterRadius` must stay within the participating instances' own route clearance — enforced by binding-author index selection, since this file has no route data. |
 | `shared/cameraObstacles.ts` | Stage 7: derives coarse bounding spheres from a world's already-computed instance matrices (`obstaclesFromMatrices` / `collectObstacles`), fed to `WorldBase.cameraObstacles` and consumed by `CameraRig`'s cinematic-camera clearance pass. NOT collision, NOT corridor-clearance — a camera-only "don't sail a moving shot through that building" hint. |
 | `world/rhythmState.ts` | `drumPresence`, `energyTrend`. |
-| `world/cinematicDirector.ts` | Shot types, blend envelope, shot transforms. **Stage 8 camera pass:** the only trigger for a cut is a major event (`impactEventId`); the old landmark-proximity / district-transition / standalone-drop tiers are gone. Every cut is a character shot. `MIN_GAP` 30s. |
-| `world/cameraShots.ts` | The major-event *sequence* camera. **Stage 8 pass 2:** engages only for `drop`+`transform` (~3.5s; other phases = plain chase cam), at most once per `CINEMATIC_COOLDOWN` (30s); shots are small/close/character-anchored. Needs `elapsed` threaded in for the cooldown. |
+| `world/cinematicDirector.ts` | Shot types, blend envelope, shot transforms. **Stage 8: cinematic cuts are OFF** (`CINEMATIC_CUTS_ENABLED = false`) — the machinery (major-event-only trigger, character shots, 30s gap) is intact and dormant. |
+| `world/cameraShots.ts` | The major-event *sequence* camera. **Stage 8: OFF** (`SEQUENCE_CAMERA_ENABLED = false`) — `getSequenceCameraShot` returns 0. Dormant machinery: engages only `drop`+`transform`, once per `CINEMATIC_COOLDOWN` (30s), small/close/character-anchored shots. |
 | `world/{camera,character}MotionState.ts`, `groundImpactState.ts` | Cross-system singletons. |
 | `world/seededRandom.ts` | mulberry32 — deterministic world generation. |
 

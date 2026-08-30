@@ -24,22 +24,15 @@ import type { MajorEventPhase, MajorEventState } from './musicEventDirector';
  * leaving `'idle'`, and cleared by `resetSequenceCameraShot()` (called
  * from `WorldDirector.reset()`) on seek/new-track.
  *
- * Phase 6 Stage 8 — "the camera belongs behind the character."
- *  - The moving camera now engages for ONLY the `drop` + `transform`
- *    window (~3.5s) of a major event. `buildup`/`tension`/`reveal`/
- *    `aftermath` keep the plain third-person chase camera — the world
- *    still transforms and the lighting/FOV still spike, the camera just
- *    stays home.
- *  - It engages at most once every `CINEMATIC_COOLDOWN` seconds. Major
- *    events themselves can fire every ~13s in an energetic track; without
- *    this the camera would be doing a cinematic move most of the time.
- *  - The shot is small and close (distances near the normal follow
- *    distance, not 30-46 units back) and character-anchored — it reads as
- *    "the chase cam gets dynamic for a few seconds at the drop", not a
- *    cinematic tour.
- *  - "Don't pan into nothing": if there is no landmark within
- *    `MAX_TARGET_DIST`, the target IS the character and every weight is
- *    gated near zero.
+ * Phase 6 Stage 8 — **the sequence camera is OFF**
+ * (`SEQUENCE_CAMERA_ENABLED = false`). Same story as the cinematic cut in
+ * `cinematicDirector.ts`: after several passes it still read as the camera
+ * "randomly" moving off the character. So `getSequenceCameraShot` now
+ * returns 0 unconditionally and the camera is the plain third-person
+ * chase cam through a major event — the world still transforms and the
+ * FOV/lighting still spike, the camera just stays behind the character.
+ * The primitives, phase table, cooldown and no-landmark gating are all
+ * kept intact and dormant for a future, more deliberate re-enable.
  *
  * Zero per-frame allocation in the hot path: every vector below is a
  * module-level scratch object mutated in place (`.copy()`/
@@ -118,9 +111,12 @@ const NEXT_PHASE: Partial<Record<MajorEventPhase, MajorEventPhase>> = {
   drop: 'transform',
 };
 
-/** The moving camera engages at most this often (seconds). A major event
- *  can fire every ~13s in an energetic track — this is what keeps the
- *  camera "behind the character most of the time" regardless. */
+/** Master switch. `false` = the sequence camera never engages; the camera
+ *  is the plain third-person chase cam through a major event. */
+const SEQUENCE_CAMERA_ENABLED = false;
+
+/** The moving camera engages at most this often (seconds) — only relevant
+ *  when the flag above is on. */
 const CINEMATIC_COOLDOWN = 30;
 
 /** How long before a phase ends its shot starts blending toward the next
@@ -258,6 +254,13 @@ export function getSequenceCameraShot(
   outPosition: THREE.Vector3,
   outLook: THREE.Vector3
 ): number {
+  if (!SEQUENCE_CAMERA_ENABLED) {
+    // Keep the idle-edge tracker current so a future re-enable doesn't
+    // mis-fire on a sequence that's already mid-flight.
+    wasIdle = seq.phase === 'idle';
+    return 0;
+  }
+
   const isIdle = seq.phase === 'idle';
 
   // Edge-triggered, once per sequence: decide whether the moving camera is

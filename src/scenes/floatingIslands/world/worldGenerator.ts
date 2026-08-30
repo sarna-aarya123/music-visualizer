@@ -77,11 +77,14 @@ function buildNearIsland(
   const { corridorRadius } = route.getDistrictInfoAt(t);
   const side = rng() < 0.5 ? -1 : 1;
   const radius = 7 + rng() * 13;
-  // Sits just beyond the corridor and slightly BELOW the walkway, so the
-  // player runs over/past islands rather than into them — the reference's
-  // "bridge threading between islands" read.
-  const lateral = corridorRadius + radius * 0.75 + 2;
-  const drop = 3 + rng() * 7;
+  // Stage 8: sits clearly beyond the corridor and well BELOW the walkway,
+  // so the player runs over/past islands, never into them or their trees.
+  // Was `corridorRadius + radius*0.75 + 2` / `3 + rng()*7` — the top rim
+  // poked ~3 units *inside* the corridor and rim-clustered sakura could
+  // clip the runner. Now the rim clears the corridor edge by ~5 units and
+  // the island drops 6-14 below the deck.
+  const lateral = corridorRadius + radius * 0.95 + 5;
+  const drop = 6 + rng() * 8;
   const pos = frame.position
     .clone()
     .addScaledVector(frame.right, side * lateral)
@@ -119,11 +122,13 @@ function buildNearIsland(
     });
   }
 
-  // Sakura clustered around the island's rim.
+  // Sakura clustered toward the island's centre (Stage 8: was 0.25-0.85 of
+  // the radius, which put rim trees right at the route edge; 0.12-0.6 now
+  // keeps them over the island, not over the walkway).
   const treeCount = 2 + Math.floor(rng() * 5);
   for (let i = 0; i < treeCount; i++) {
     const a = rng() * Math.PI * 2;
-    const r = radius * (0.25 + rng() * 0.6);
+    const r = radius * (0.12 + rng() * 0.48);
     trees.push({
       x: pos.x + Math.cos(a) * r,
       y: pos.y + 0.3,

@@ -9,27 +9,23 @@ import { majorEventState } from './musicEventDirector';
  * constant camera motion. The gameplay camera (CameraRig.tsx) stays the
  * default; this only ever decides WHEN and WHICH short cut happens.
  *
- * Phase 6 Stage 8 — "follow the protagonist, reveal the world only when
- * the music truly earns it." Cuts now fire on ONE thing: a major event
- * (`majorEventState.impactEventId` — the rare, ~13s coordinated
- * drop/transform sequence). The old landmark-proximity and district-
- * transition tiers were removed: they triggered on POSITION alone (every
- * time the character ran past a landmark or crossed a district), with a
- * 4.5s floor, so a cut was firing roughly every few seconds and — because
- * they preferred the `'landmark'` shot — the camera was pointed at the
- * environment instead of the character most of the time. A plain `dropId`
- * that never escalates to a major event no longer cuts either: it still
- * drives every gameplay-camera impulse (FOV punch, forward burst, speed),
- * which is plenty for a beat that isn't a genuine "moment". When a cut
- * does fire it is always a CHARACTER-focused framing; a nearby landmark
- * only nudges which character shot is chosen so it sits as a backdrop,
- * never a landmark-only shot.
+ * Phase 6 Stage 8 — **cinematic cuts are OFF.** After several rounds of
+ * the camera still reading as "random" / cutting to angles where the
+ * character wasn't clearly in frame, the whole cut system is disabled
+ * (`CINEMATIC_CUTS_ENABLED = false`). The camera is now the third-person
+ * chase camera, full stop — it stays behind the character. Everything
+ * below (shot table, selection, blend envelope) is kept intact and
+ * dormant so a future, more careful cinematic layer can be switched back
+ * on deliberately; nothing calls `startShot` while the flag is false, so
+ * `cinematicState.shot` never leaves `'gameplay'` and `getCinematicBlend`
+ * always returns 0.
  *
- * Multi-environment architecture: still environment-agnostic — landmark
- * positions are a plain `THREE.Vector3[]`, the district is a plain string.
- * The `district`/`frame` params are kept on `stepCinematicDirector` so
- * `CameraRig`'s call site is unchanged, even though only `landmarks` is
- * read now.
+ * History (why the flag, not a delete): cuts used to fire on
+ * landmark-proximity / district-transition / every drop — every few
+ * seconds, pointed at the environment. Pass 1 cut that to major-events-
+ * only + character shots; pass 2 added a 30s gap. It still wasn't enough
+ * — a 3s cut to a side angle mid-run, even aimed at the character, reads
+ * as "why did the camera just do that". So: off.
  */
 
 export type ShotType =
@@ -57,12 +53,11 @@ export const cinematicState: CinematicState = {
   targetPosition: new THREE.Vector3(),
 };
 
-/** Minimum seconds between cuts. Major events can fire every ~13s in an
- *  energetic track — this holds the cinematic cut to roughly once every
- *  30s so the camera stays behind the character the vast majority of the
- *  time. Matches `cameraShots.ts`'s `CINEMATIC_COOLDOWN` so the cut and
- *  the (brief) sequence camera move engage together on the same major
- *  event and then both go quiet. */
+/** Master switch. `false` = no cinematic cuts at all; the camera is the
+ *  plain third-person chase cam. */
+const CINEMATIC_CUTS_ENABLED = false;
+
+/** Minimum seconds between cuts (only relevant when the flag above is on). */
 const MIN_GAP = 30;
 /** A landmark within this distance when a major event lands is close
  *  enough to sit as a backdrop behind a character shot — it only nudges
@@ -124,8 +119,8 @@ export function stepCinematicDirector(
   district: string,
   landmarks: THREE.Vector3[]
 ): void {
-  // `frame`/`district` are unused now (see the file header) — kept so
-  // CameraRig's call site doesn't change.
+  // `frame`/`district` are unused — kept so CameraRig's call site doesn't
+  // change.
   void frame;
   void district;
 
@@ -136,17 +131,16 @@ export function stepCinematicDirector(
     lastShotEndTime = elapsed;
   }
 
+  // Consume the major-event id every frame regardless — keeps `majorHit`
+  // correct and prevents a backlog if the flag below is ever re-enabled.
+  const majorHit = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorConsumer);
+
+  if (!CINEMATIC_CUTS_ENABLED) return; // cinematic cuts are OFF — see the file header
+
   const cooldownOk = elapsed - lastShotEndTime > MIN_GAP;
   if (cinematicState.shot !== 'gameplay' || !cooldownOk) return;
 
-  // The ONLY trigger: a major event. This is the rare, coordinated
-  // drop/transform moment — the one time it "really makes sense" to leave
-  // the chase camera. The cut is always CHARACTER-focused; a landmark
-  // that happens to be right here only picks which character shot so it
-  // reads as a backdrop, never a landmark-only shot (that framing, when
-  // there's genuinely something to reveal, is the sequence camera's
-  // `reveal` phase — see cameraShots.ts).
-  const majorHit = consumeEvent(majorEventState.impactEventId, majorEventState.intensity, majorConsumer);
+  // Dormant path: on a major event, a single character-focused cut.
   if (majorHit > 0) {
     const backdrop = findNearestLandmark(characterPos, landmarks, LANDMARK_BACKDROP_DIST) !== null;
     const shot = backdrop
