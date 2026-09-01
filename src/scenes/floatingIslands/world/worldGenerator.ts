@@ -201,6 +201,14 @@ export function generateFloatingIslandsWorld(
   for (const p of pagodas) {
     cameraObstacles.push({ position: new THREE.Vector3(p.x, p.y + 4, p.z), radius: Math.min(4 * p.scale, 20) });
   }
+  // Sakura canopies — the chase cam swinging wide on a bend runs into these
+  // (they sit near the island rims, closest thing to the walkway).
+  for (const t of trees) {
+    cameraObstacles.push({
+      position: new THREE.Vector3(t.x, t.y + t.trunkHeight + t.canopyRadius * 0.4, t.z),
+      radius: Math.min(t.canopyRadius + 0.8, 12),
+    });
+  }
 
   return { islands, pagodas, trees, torii, landmarkPositions, cameraObstacles };
 }

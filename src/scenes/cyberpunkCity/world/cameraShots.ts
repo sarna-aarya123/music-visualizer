@@ -2,60 +2,40 @@ import * as THREE from 'three';
 import type { MajorEventPhase, MajorEventState } from './musicEventDirector';
 
 /**
- * Phase 6 Stage 4 — moving camera shots for the major-event sequence
- * (Stage 3's buildup -> tension -> drop -> transform -> reveal ->
- * aftermath). Three reusable, parameterised motion primitives rather than
- * one bespoke function per named shot in the brief — "dolly-in"/"dolly-
- * out reveal" are both `push` (sign of the distance delta), "flyby",
- * "sweeping aerial", and "ground-level pass" are all `sweep` at different
- * height/lateral parameters, `orbit` is `orbit`.
+ * The major-event sequence's cinematic camera — "hero shot or nothing"
+ * (Stage 8, the fifth pass on this area).
  *
- * Pure math, no rendering: `getSequenceCameraShot()` is the single entry
- * point `WorldDirector` delegates to (this is the "what shot + when"
- * decision — the phase -> `ShotSpec` table below), writing a position and
- * look target into caller-owned output vectors and returning a 0..1 blend
- * weight. `CameraRig` is the only thing that ever touches `camera.*`
- * directly — it decides how this weight composes with everything else
- * (mode blend, the existing cinematicDirector cut) and applies the result.
+ * WHAT IT DOES NOW: on a major event, IF a signature landmark (pyramids,
+ * whale, ferris wheel, rings, giant mushrooms…) sits in the framing band
+ * [`MIN_TARGET_DIST`, `MAX_TARGET_DIST`] from the character when the
+ * sequence leaves `idle`, lock onto it and, for the `drop`+`transform`
+ * window (~3.5s), cut to ONE composed `heroFrame` shot: camera behind the
+ * character on the line from that landmark, lifted — landmark beyond,
+ * character in the foreground, both in frame, a slow settle in, no orbit
+ * or sweep. Then the chase cam has it back.
  *
- * Target: locked once per sequence — the nearest landmark to the
- * character at the moment the sequence starts, IF one is genuinely close
- * (`MAX_TARGET_DIST`). Locking is edge-triggered off `MajorEventState.phase`
- * leaving `'idle'`, and cleared by `resetSequenceCameraShot()` (called
- * from `WorldDirector.reset()`) on seek/new-track.
+ * IF NO LANDMARK IS IN THE BAND: `getSequenceCameraShot` returns 0 for
+ * every phase — the plain third-person chase cam holds through the whole
+ * sequence. There is deliberately no "dynamic move around the character"
+ * fallback: an always-on camera move that frames nothing was exactly what
+ * four prior tuning passes kept failing on.
  *
- * Phase 6 Stage 8 — the sequence camera is back ON
- * (`SEQUENCE_CAMERA_ENABLED = true`) but deliberately minimal: it engages
- * ONLY for the `drop` + `transform` window (~3.5s) of a major event —
- * `buildup`/`tension`/`reveal`/`aftermath` keep the plain chase cam — at
- * most once per `CINEMATIC_COOLDOWN` seconds, with small close
- * character-anchored shots (distances near the normal follow distance,
- * not 30-46 units back). It reinforces the cinematicDirector cut's timing
- * — a quick dynamic move that lands with the drop, then the chase cam has
- * it back. If there's no landmark within `MAX_TARGET_DIST` the target is
- * the character and every weight is gated near zero (no "pan into
- * nothing").
+ * Pure math, no rendering. `getSequenceCameraShot()` writes a position and
+ * look target into caller-owned vectors and returns a 0..1 blend weight;
+ * `CameraRig` is the only thing that touches `camera.*` and composes this
+ * with the mode blend + the Stage-7 environment-clearance pass (which runs
+ * while this weight is non-zero, so the hero shot can't clip geometry).
  *
- * Zero per-frame allocation in the hot path: every vector below is a
- * module-level scratch object mutated in place (`.copy()`/
- * `.addScaledVector()`/`.applyAxisAngle()`, never `.clone()`).
+ * `SEQUENCE_CAMERA_ENABLED = false` kills it entirely (chase cam always).
+ * The locked target is cleared by `resetSequenceCameraShot()` (from
+ * `WorldDirector.reset()`) on seek/new-track.
  *
- * Phase 6 Stage 6: every shot's position and look-at are each a blend
- * between the character's own current position and the locked landmark
- * target — `pivotWeight`/`lookWeight` below (0 = character, 1 =
- * landmark). This replaced an earlier version where every primitive
- * always positioned around AND looked at the locked landmark, full stop
- * — the character was read only once, to help pick that landmark, and
- * never touched again. That made the character fall out of frame for
- * most of a sequence two ways at once: the look-at never pointed at them,
- * and because the pivot was a single static point while the character
- * kept running, they drifted away from it as the sequence went on. Using
- * `characterPos` (continuously updated every frame, unlike the locked
- * target) as part of the pivot fixes both — most phases are now
- * character-anchored with a landmark bias for direction/energy, not
- * landmark-anchored with the character as an afterthought. See
- * `PLAN.md` §10 for the full diagnosis and per-phase intent this
- * implements.
+ * Zero per-frame allocation: every vector below is a module-level scratch
+ * object mutated in place, never `.clone()`.
+ *
+ * The `push`/`orbit`/`sweep` primitives and their `pivotWeight`/
+ * `lookWeight` char↔landmark blends (Stages 4/6) are kept as dead code
+ * below — no `SHOT_TABLE` entry uses them now.
  */
 
 type ShotSpec =
@@ -70,7 +50,16 @@ type ShotSpec =
       height: number;
       pivotWeight: number;
       lookWeight: number;
-    };
+    }
+  /** The one shot this file fires now (Stage 8 — "hero shot or nothing").
+   *  Camera sits behind the character ON THE LINE from the locked landmark,
+   *  lifted: the landmark reads BEYOND the character, the character sits in
+   *  the foreground for scale, and both are in frame by construction. No
+   *  orbit, no lateral sweep — a slow settle only. `distFrom`/`distTo` ease
+   *  within the phase; `lookWeight` biases the look-at from character (0)
+   *  toward landmark (1). Only ever used when a real landmark is locked (see
+   *  the hard gate in `getSequenceCameraShot`). */
+  | { kind: 'heroFrame'; distFrom: number; distTo: number; height: number; lookWeight: number };
 
 /** Eases 0..1 with zero velocity at both ends — the same curve
  *  `cinematicDirector.ts`'s `smoothstep01` and `musicEventDirector.ts`'s
@@ -81,32 +70,27 @@ function ease(t: number): number {
   return c * c * (3 - 2 * c);
 }
 
-/** Buildup: a slow push that trails the character from far back, closing
- *  in — an epic "camera catching up" read, character as anchor, whatever
- *  landmark is ahead visible as they run toward it. Tension: a mostly
- *  character-pivoted orbit — "the camera is waiting with them" — with
- *  just enough landmark bias in the look to feel like anticipation, not
- *  a plain follow-cam. Drop: a fast character-centered punch-in (mostly
- *  hidden behind the existing cinematicDirector cut, which takes priority
- *  — see CameraRig; kept as a real shot rather than a no-op so the system
- *  still does something sensible on the rare frame the cut isn't active).
- *  Transform: a sweep still anchored mostly on the character, with more
- *  landmark bias than buildup/tension — "flying around the character
- *  while the world changes around them". Reveal: THE phase where
- *  landmark focus is intentional — but the position pivot stays fairly
- *  character-anchored (so they stay legible as a foreground/scale
- *  reference) while the look-at swings mostly toward the landmark being
- *  revealed. Aftermath: pivot and look both swing back toward the
- *  character — "attention returns to them" as the sequence winds down. */
-// Phase 6 Stage 8 camera pass 2: only `drop` + `transform` have an entry —
-// every other phase falls through to `return 0` (plain chase camera).
-// Both specs are small and close to the normal follow distance
-// (FOLLOW_DIST 5.5 / FOLLOW_HEIGHT 3.3 in CameraRig) and character-
-// anchored (low pivot/look weights, Stage 6), so this reads as the chase
-// cam getting dynamic for a few seconds at the drop, not a cinematic tour.
+/**
+ * Stage 8 — "hero shot or nothing". This file fires exactly ONE kind of
+ * shot: `heroFrame`, and ONLY when a real signature landmark was locked
+ * when the sequence started (`sequenceHasLandmark`). If nothing worth
+ * framing is near, `getSequenceCameraShot` returns 0 for every phase and
+ * the camera stays on the plain chase cam — there is no "character-anchored
+ * dynamic move" fallback any more. That fallback (an orbit/push around the
+ * character showing nothing) was exactly the "cinematic that shows nothing"
+ * the user kept reporting across four prior tuning passes.
+ *
+ * Only `drop` + `transform` have an entry (~3.5s total). `drop` eases the
+ * shot in; `transform` holds then eases out (see the envelope at the bottom
+ * of `getSequenceCameraShot`). `buildup`/`tension`/`reveal`/`aftermath`
+ * return 0 → plain chase cam. The `dist` creeps in slightly from `drop` to
+ * `transform` for a gentle settle toward the subject.
+ */
+const HERO_HEIGHT = 10;
+const HERO_LOOK_WEIGHT = 0.62;
 const SHOT_TABLE: Partial<Record<MajorEventPhase, ShotSpec>> = {
-  drop: { kind: 'push', distStart: 13, distEnd: 8, height: 4, lateral: -3, pivotWeight: 0.15, lookWeight: 0.1 },
-  transform: { kind: 'orbit', radius: 11, height: 5, angleStart: 0.15, angleSpan: 0.45, pivotWeight: 0.15, lookWeight: 0.12 },
+  drop: { kind: 'heroFrame', distFrom: 32, distTo: 27, height: HERO_HEIGHT, lookWeight: HERO_LOOK_WEIGHT },
+  transform: { kind: 'heroFrame', distFrom: 27, distTo: 22, height: HERO_HEIGHT, lookWeight: HERO_LOOK_WEIGHT },
 };
 
 const NEXT_PHASE: Partial<Record<MajorEventPhase, MajorEventPhase>> = {
@@ -127,17 +111,18 @@ const CINEMATIC_COOLDOWN = 20;
  *  boundary ever snaps, regardless of how the two primitives' endpoints
  *  happen to line up numerically. */
 const TRANSITION_TIME = 0.35;
-/** Fraction of `buildup` spent easing the whole shot system in from
- *  nothing, and of `aftermath` spent easing it back out to nothing. */
+/** Fraction of `transform` spent easing the shot back out to the chase cam. */
 const FADE_FRACTION = 0.6;
-/** A landmark farther than this from the character when the sequence
- *  starts isn't worth framing — the sequence stays purely on the
- *  character instead (Stage 8: tightened from 90, and the old
- *  "point 40 units ahead" fallback is gone). */
-const MAX_TARGET_DIST = 60;
-/** Pivot/look weight ceiling when there's no real landmark to frame —
- *  effectively pins every phase to the character. */
-const NO_LANDMARK_WEIGHT_CAP = 0.08;
+/** The framing band: a locked landmark must sit within
+ *  [MIN_TARGET_DIST, MAX_TARGET_DIST] of the character when the sequence
+ *  starts. Nearer than the floor and the camera would already be on top of
+ *  it (nothing to "reveal"); past the ceiling it's too small/far to be the
+ *  subject. Outside the band → NO cinematic, plain chase cam. The ceiling
+ *  is generous because every signature landmark is enormous (pyramids
+ *  30-90u, whales 40-75u, ferris wheels 30-60u) and the character keeps
+ *  running toward it during the ~3.5s shot, arriving roughly as it ends. */
+const MIN_TARGET_DIST = 45;
+const MAX_TARGET_DIST = 140;
 
 // --- Locked per-sequence target -------------------------------------
 const lockedTarget = new THREE.Vector3();
@@ -150,12 +135,20 @@ let wasIdle = true;
 let lastEngageTime = -999;
 let suppressedThisSequence = false;
 
-function findNearestLandmark(pos: THREE.Vector3, landmarks: THREE.Vector3[], maxDist: number): THREE.Vector3 | null {
+/** Nearest landmark within the framing band [minDist, maxDist]. Anything
+ *  closer than `minDist` is skipped (the camera is already on top of it),
+ *  so this can return a farther landmark over a very close one. */
+function findNearestLandmark(
+  pos: THREE.Vector3,
+  landmarks: THREE.Vector3[],
+  minDist: number,
+  maxDist: number
+): THREE.Vector3 | null {
   let best: THREE.Vector3 | null = null;
   let bestDist = maxDist;
   for (const p of landmarks) {
     const dist = pos.distanceTo(p);
-    if (dist < bestDist) {
+    if (dist >= minDist && dist < bestDist) {
       bestDist = dist;
       best = p;
     }
@@ -197,16 +190,32 @@ function evaluateShot(
   outLook: THREE.Vector3
 ): void {
   const t = ease(progress);
-  // Position pivots around a character<->landmark blend (not always the
-  // landmark) and the look-at is its OWN independent blend — see the
-  // file-level comment. Decoupling the two is what lets `reveal` keep
-  // the character legible as a foreground/scale reference (low
-  // pivotWeight) while still swinging the look-at mostly onto the
-  // landmark being revealed (high lookWeight). `pivotW`/`lookW` are the
-  // spec's weights AFTER the no-landmark gate (Stage 8).
+  // `heroFrame` (the only kind fired now) ignores `pivotW`/`lookW` and
+  // reads its own `lookWeight`. The push/orbit/sweep cases below are dead
+  // code kept for the type/shape; they still use the character<->landmark
+  // pivot blend.
   scratchPivot.copy(characterPos).lerp(target, pivotW);
   scratchLookPoint.copy(characterPos).lerp(target, lookW);
   switch (spec.kind) {
+    case 'heroFrame': {
+      // Direction FROM the landmark TO the character, flattened to XZ so
+      // the vertical offset is purely `height`. Camera sits that way past
+      // the character: landmark beyond, character in the foreground for
+      // scale, both in frame by construction. Degenerate only if the
+      // character is exactly on the landmark — fall back to straight
+      // behind.
+      scratchDir.copy(characterPos).sub(target);
+      scratchDir.y = 0;
+      if (scratchDir.lengthSq() < 1e-4) scratchDir.copy(tangent).multiplyScalar(-1);
+      scratchDir.normalize();
+      const heroDist = THREE.MathUtils.lerp(spec.distFrom, spec.distTo, t);
+      outPosition
+        .copy(characterPos)
+        .addScaledVector(scratchDir, heroDist)
+        .addScaledVector(up, spec.height);
+      outLook.copy(characterPos).lerp(target, spec.lookWeight);
+      break;
+    }
     case 'push': {
       const dist = THREE.MathUtils.lerp(spec.distStart, spec.distEnd, t);
       outPosition
@@ -272,10 +281,10 @@ export function getSequenceCameraShot(
     suppressedThisSequence = elapsed - lastEngageTime < CINEMATIC_COOLDOWN;
     if (!suppressedThisSequence) lastEngageTime = elapsed;
 
-    // Stage 8: if no landmark is genuinely close, the target IS the
-    // character — never a blank point down the route — and
-    // `sequenceHasLandmark` gates the weights below.
-    const nearest = findNearestLandmark(characterPos, landmarks, MAX_TARGET_DIST);
+    // Hero shot or nothing: lock onto the nearest landmark in the framing
+    // band, or mark this sequence as having none (→ the chase cam holds
+    // for the whole sequence, no cinematic).
+    const nearest = findNearestLandmark(characterPos, landmarks, MIN_TARGET_DIST, MAX_TARGET_DIST);
     if (nearest) {
       lockedTarget.copy(nearest);
       sequenceHasLandmark = true;
@@ -288,6 +297,11 @@ export function getSequenceCameraShot(
   wasIdle = isIdle;
 
   if (isIdle || !hasLockedTarget || suppressedThisSequence) return 0;
+  // No landmark was in the framing band when this sequence started → no
+  // cinematic at all. This is the whole point of the Stage 8 rework: the
+  // camera never leaves the character unless there is something worth
+  // cutting to.
+  if (!sequenceHasLandmark) return 0;
 
   // Only `drop` + `transform` engage — every other phase keeps the plain
   // chase camera (there is no SHOT_TABLE entry, so `spec` is undefined).
@@ -297,23 +311,9 @@ export function getSequenceCameraShot(
   const duration = phaseDurations[seq.phase as Exclude<MajorEventPhase, 'idle'>];
   const progress = duration > 0 ? THREE.MathUtils.clamp(seq.phaseTime / duration, 0, 1) : 1;
 
-  // No-landmark gate: pin every phase to the character when there's
-  // nothing worth framing.
-  const gate = (w: number) => (sequenceHasLandmark ? w : Math.min(w, NO_LANDMARK_WEIGHT_CAP));
-
-  evaluateShot(
-    spec,
-    progress,
-    characterPos,
-    lockedTarget,
-    gate(spec.pivotWeight),
-    gate(spec.lookWeight),
-    tangent,
-    right,
-    up,
-    outPosition,
-    outLook
-  );
+  // `heroFrame` reads its own weights; the 0/0 here are the unused
+  // pivot/look blends for the dead push/orbit/sweep kinds.
+  evaluateShot(spec, progress, characterPos, lockedTarget, 0, 0, tangent, right, up, outPosition, outLook);
 
   // Cross-fade toward the next phase's shot (at its own progress 0) in the
   // last TRANSITION_TIME seconds of this one, so no phase boundary snaps.
@@ -322,19 +322,7 @@ export function getSequenceCameraShot(
   if (nextPhase && timeLeft < TRANSITION_TIME) {
     const nextSpec = SHOT_TABLE[nextPhase];
     if (nextSpec) {
-      evaluateShot(
-        nextSpec,
-        0,
-        characterPos,
-        lockedTarget,
-        gate(nextSpec.pivotWeight),
-        gate(nextSpec.lookWeight),
-        tangent,
-        right,
-        up,
-        nextPos,
-        nextLook
-      );
+      evaluateShot(nextSpec, 0, characterPos, lockedTarget, 0, 0, tangent, right, up, nextPos, nextLook);
       const mix = ease(1 - timeLeft / TRANSITION_TIME);
       outPosition.lerp(nextPos, mix);
       outLook.lerp(nextLook, mix);

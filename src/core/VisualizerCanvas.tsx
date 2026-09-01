@@ -57,9 +57,9 @@ function PostFX() {
       // a solid slab; 0.34 killed almost all glow and everything went
       // bland. At 0.28 mid-tones still don't bloom but emissive props and
       // bright highlights get a real halo again.
-      const raw = 0.5 + featureFrame.energy * 1.3 + pulse.current * 0.7 + majorEnvelope * 2.0;
-      bloomRef.current.intensity = Math.min(raw, 2.9);
-      bloomRef.current.luminanceThreshold = 0.28 + majorEnvelope * 0.1;
+      const raw = 0.5 + featureFrame.energy * 1.3 + pulse.current * 0.7 + majorEnvelope * 2.5;
+      bloomRef.current.intensity = Math.min(raw, 3.3);
+      bloomRef.current.luminanceThreshold = 0.28 + majorEnvelope * 0.08;
     }
     if (vignetteRef.current) {
       // Floor raised 0.15 -> 0.45: the frame always keeps a visible edge

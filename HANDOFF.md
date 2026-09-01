@@ -29,42 +29,61 @@ shockwave character ability). **Stage 8** has NOT formally started as a plan —
 and unapproved — but many user-directed fixes have landed over several
 commits (full detail in `PLAN.md` §12). Current state:
 
-- **Camera:** cinematic cuts and the major-event sequence camera are
-  **ON but small-scope** (`CINEMATIC_CUTS_ENABLED` / `SEQUENCE_CAMERA_ENABLED
-  = true`). They were disabled for a couple of commits after the user kept
-  reporting "random" camera moves; now re-enabled deliberately: ONE
-  trigger (a major event), one ~3s cut that always uses a
-  character-guaranteed framing (`dramaticClose`/`frontFacing`/`lowAngle` —
-  no `sideTracking`/`landmark`), plus a brief close `drop`+`transform`
-  move, at most **once per 20s**, then back to the plain chase cam. The
-  landmark-proximity / district-transition / every-drop triggers are gone
-  for good. Per-beat camera impulses in `CameraRig` are ~halved from the
-  historical tuning (the chase cam is planted). Flip either flag to `false`
-  to kill cinematics entirely — the machinery stays intact.
-- **Brightness:** the three neon-grid worlds (Cyberpunk / Outer / Void)
-  were toned way down, then brought partway back on the user's request —
-  bloom `luminanceThreshold` now **0.28** (0.22 = blinding slab, 0.34 =
-  dead flat), style-2 path grid additive clamp **0.9**, emissive floors on
-  the bright worlds sit ~30% below their originals. The DARK worlds (Abyss
-  / Forest / Carnival) and the near-black character outfits in several
-  worlds still need the OPPOSITE treatment.
-- **Clipping:** `flank()` has a self-clearance guard that pushes a
-  hairpin-inside prop away from the neighbouring arc it grazes (push cap
-  scales with the prop's radius). Floating Islands islands/trees moved out
-  + down. Headless before/after: every real intrusion fixed, no
-  regressions, one sub-unit residual tetrahedron in Abstract Void.
-- **Desert Dream** was rebuilt (`buildDesert`): the near field was empty
-  (props placed off the ~5u visible path in wide districts) and the road
-  was invisible (same beige as sand). New `flank(..., baseHalf)` param
-  places dressing relative to the visible path; new `rocks` / `stones` /
-  `palms` / `arches` groups + closer dunes/cacti/pyramids; dark clay road
-  colours. Confirmed by eye: it's a real desert now.
+- **Camera — "hero shot or nothing"** (camera pass 5). The
+  `cinematicDirector.ts` quick cut is now **OFF**
+  (`CINEMATIC_CUTS_ENABLED = false`). The ONE cinematic is the
+  `cameraShots.ts` sequence camera: on a major event, IF a signature
+  landmark sits in the framing band (`[45, 140]` u) it cuts to a single
+  composed `heroFrame` shot for `drop`+`transform` (~3.5s) — camera behind
+  the character on the line from the landmark, both in frame, a slow
+  settle, no orbit — then the chase cam. **No landmark in band → no camera
+  move at all** (`getSequenceCameraShot` returns 0 every phase; the
+  no-landmark "dynamic move" fallback is deleted — that was the "cinematic
+  that shows nothing"). `SEQUENCE_CAMERA_ENABLED = false` kills it entirely.
+- **Camera collision (pass 6):** the environment-clearance push in
+  `CameraRig.tsx` now runs **every frame on the plain chase camera**, not
+  just cinematic shots — the chase cam swings wide into trees/houses on
+  bends. Eased, faded out toward first person, margin 2.0 (3.5 under a
+  cinematic). `obstacleKeys` widened per world (+ `rocks`/`blocks`/`roofs`/
+  `booths`); FI adds a sphere per sakura canopy.
+- **Brightness:** neon-grid worlds (Cyberpunk / Outer / Void) toned down
+  then partway back — bloom `luminanceThreshold` **0.28**. Dark worlds
+  (Abyss / Forest / Carnival) lifted — `sky.exposure` +0.08–0.1, `fog.near`
+  out, darkest prop colours up. Near-black character outfits lifted in
+  `characterAppearance.ts` + a shadow-side lift in `Character.tsx`. **Effect
+  glow** (pass 6): the *per-major-event* terms bumped everywhere —
+  `WorldScene`/`Islands` emissive clamp 1.1→1.45 & rim `env*0.7`,
+  `VisualizerCanvas` bloom `env*2.5` clamp 3.3, `ProceduralSky` white-mix
+  0.22 — so a drop flares, not just lifts. Still bounded short of white-out.
+- **Clipping — verified 0 across all 9 worlds** at a 1.1u character radius
+  (real ~0.5). `flank()` has a ±3% local hairpin scan + a **full-loop fold
+  guard** (cached 384-sample centreline, vertical-aware, radial last
+  resort); every stretched prop passes its TRUE half-extent as `ownRadius`.
+  Headless `clearance-check.mjs` (transformed-vertex AABBs vs the character
+  body band): 0 intruders (was 51), excl. Desert `sand` + Void portal
+  rings. FI walkway railings **removed entirely** — as straight instanced
+  segments they chorded the curved route and cut across the deck; denser
+  posts / an outward nudge didn't fully fix it, so `Walkway.tsx` is now
+  just the deck ribbon.
+- **Object orientation:** Desert arches (flat squashed ring → broadside
+  monument), Abyss whales (random yaw → cruising the canyon), Carnival
+  ferris wheels (edge-on → full face across the path), Void portal rings
+  (flat, tube at head height → vertical, hole around the walkway), Outer
+  rings (overhung the deck → `ownRadius = rad`).
+- **Desert Dream — rebuilt, then flattened.** NO dunes near the path
+  (backdrop only, ≥110u out); near-field is slender vertical props only,
+  each ≥5u clear of the deck; pale/desaturated `sand` floor vs dark
+  reddish-clay path so the walkway is an obvious strip; twilight sky with
+  stars; more/bigger/closer floating pyramids. **`flatRoute: true`** — its
+  route is generated on one elevation (opt-in via
+  `WorldDefinition.flatRoute` → `generateRoute(seed, { flat })`; other 8
+  worlds untouched, layout byte-identical for the same seed). Headless
+  clip check now runs each world with its flat flag at a **1.4u** char
+  radius: 0 intruders.
 
-Remaining Stage 8 work (brightening the DARK worlds + character
-readability, continuous music-reactivity so the world breathes between
-events, per-world geometry cleanup incl. the FI railings, camera
-collision robustness) is not started. **The user said the next phase is
-"make the environments feel more alive."**
+Remaining Stage 8 work: **continuous music-reactivity** so the world
+breathes between events (the big one), a finer per-world art pass. The
+user still has changes to give and is reviewing the Desert rebuild + glow.
 
 ---
 
@@ -186,8 +205,8 @@ The folder name is a leftover misnomer. It contains no world any more:
 
 | File | Role |
 |---|---|
-| `CameraRig.tsx` | Owns route progress `t`, the speed model, publishes `characterMotionState`, frames third/first person, applies cinematic shots. |
-| `Character.tsx` | The runner: pose state machine, layered secondary motion, jump, per-world appearance, cel shading + outline. |
+| `CameraRig.tsx` | Owns route progress `t`, the speed model, publishes `characterMotionState`, frames third/first person, applies the hero cinematic shot, and (pass 6) pushes the chase camera out of solid-prop spheres every frame (`world.cameraObstacles`, eased, first-person-faded). |
+| `Character.tsx` | The runner: pose state machine, layered secondary motion, **ankle joints**, jump (tuck-up / reach-down), per-world appearance, cel shading + outline. 2026-08-30 less-robotic pass: ankle articulation, ballistic gait-phased bob, plant-then-whip leg drive, always-bent elbows, shoulder↔pelvis counter-twist, smoothed facing + turn-lean, a tiny non-periodic stride wobble. |
 | `MusicEventDirector.tsx` / `RhythmState.tsx` | Thin non-rendering `useFrame` mounts that step their singletons. |
 | `world/routeGenerator.ts` | Closed-loop Catmull-Rom route + per-region corridor radius. Generic over region name. |
 | `world/musicController.ts` | Speed model + `speedPerceptionFrac` (shared "how fast does this feel"). |
@@ -197,8 +216,8 @@ The folder name is a leftover misnomer. It contains no world any more:
 | `world/worldEvents.ts` | Stage 5: the "world event executor" — four pure, zero-allocation per-instance transform functions (`riseLike`/`spinUp`/`scatterReform`, ten archetype names mapped onto them) plus `createSignatureEventAnimated(...)`, which each world's `build()` calls to turn a `PropGroup` into one whose flagged instances play out that world's own `EventBinding[]` data across the sequence's phases. No rendering — only `OutlinedInstances` (via the returned `AnimatedInstances`) and `floatingIslands/Islands.tsx`'s own hand-rolled update ever call `setMatrixAt`. Stage 7: `scatterReform` (the one evaluator that moves instances *laterally*) now documents that a binding's `scatterRadius` must stay within the participating instances' own route clearance — enforced by binding-author index selection, since this file has no route data. |
 | `shared/cameraObstacles.ts` | Stage 7: derives coarse bounding spheres from a world's already-computed instance matrices (`obstaclesFromMatrices` / `collectObstacles`), fed to `WorldBase.cameraObstacles` and consumed by `CameraRig`'s cinematic-camera clearance pass. NOT collision, NOT corridor-clearance — a camera-only "don't sail a moving shot through that building" hint. |
 | `world/rhythmState.ts` | `drumPresence`, `energyTrend`. |
-| `world/cinematicDirector.ts` | Cinematic cut. **Stage 8:** `CINEMATIC_CUTS_ENABLED = true`; ONE trigger (major event), ~3s, always `dramaticClose`/`frontFacing`/`lowAngle` (character-guaranteed — no `sideTracking`/`landmark`), `MIN_GAP` 20s. Set the flag `false` to disable. |
-| `world/cameraShots.ts` | The major-event *sequence* camera. **Stage 8:** `SEQUENCE_CAMERA_ENABLED = true`; engages only `drop`+`transform` (~3.5s), once per `CINEMATIC_COOLDOWN` (20s), small/close/character-anchored, character target + gated weights when no landmark. Set the flag `false` to disable. |
+| `world/cinematicDirector.ts` | The old quick cinematic cut. **Camera pass 5:** `CINEMATIC_CUTS_ENABLED = false` — the character-only framings framed nothing new. Still consumes the event id each frame; never calls `startShot`. Dormant machinery. |
+| `world/cameraShots.ts` | The one cinematic: the major-event *sequence* camera, "hero shot or nothing". `SEQUENCE_CAMERA_ENABLED = true`. On a major event, only if a landmark is in the band `[MIN_TARGET_DIST 45, MAX_TARGET_DIST 140]`: a single `heroFrame` shot (camera behind the character on the landmark line, both framed, slow settle) on `drop`+`transform` (~3.5s). No landmark → returns 0 every phase (plain chase). Flag `false` disables. |
 | `world/{camera,character}MotionState.ts`, `groundImpactState.ts` | Cross-system singletons. |
 | `world/seededRandom.ts` | mulberry32 — deterministic world generation. |
 

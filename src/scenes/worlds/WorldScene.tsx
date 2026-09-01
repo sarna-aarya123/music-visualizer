@@ -32,7 +32,7 @@ export function WorldScene({
   featureFrame: AudioFeatureFrame;
   def: WorldDefinition;
 }) {
-  const route = useMemo(() => generateRoute(def.seed), [def.seed]);
+  const route = useMemo(() => generateRoute(def.seed, { flat: def.flatRoute }), [def.seed, def.flatRoute]);
   const built = useMemo(() => def.build(route, def.seed), [def, route]);
   const trackGeneration = useAudioStore((s) => s.trackGeneration);
 
@@ -74,15 +74,19 @@ export function WorldScene({
       const m = materials[g.key];
       if (!m) continue;
       const base = (m.userData.baseEmissive as number) ?? 0;
-      const eventEmissive = Math.min((g.reactive.event ?? 0) * env, 1.1);
+      // Effect glow bumped up a notch (event term clamp 1.1->1.45, total
+      // 1.7->2.0, rim boost 0.5->0.7) so a drop reads as the world flaring,
+      // not just a slight overall lift — still bounded well short of the
+      // old white-out.
+      const eventEmissive = Math.min((g.reactive.event ?? 0) * env, 1.45);
       m.uniforms.uEmissive.value = Math.min(
         base +
           (g.reactive.mood ?? 0) * featureFrame.sectionMood +
           (g.reactive.drums ?? 0) * rhythmState.drumPresence +
           eventEmissive,
-        1.7
+        2.0
       );
-      m.uniforms.uRimStrength.value = ((m.userData.baseRim as number) ?? 0.5) * (1 + env * 0.5);
+      m.uniforms.uRimStrength.value = ((m.userData.baseRim as number) ?? 0.5) * (1 + env * 0.7);
     }
   });
 

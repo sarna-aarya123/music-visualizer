@@ -48,15 +48,17 @@ const CHASE_LOOK_AHEAD = 3.2; // third-person look target: how far ahead of the 
 const CHASE_LOOK_HEIGHT = 0.9; // third-person look target: how far above the character
 const MODE_BLEND_RATE = 1.6; // per second — the third/first-person transition
 
-// Phase 6 Stage 7: cinematic-camera environment clearance (see the
-// clearance block in useFrame). Only active while a cinematicDirector cut
-// or the major-event sequence shot is actually pulling the camera off its
-// gameplay position — the plain chase camera stays inside the
-// guaranteed-clear corridor and is never touched by this.
-const CAMERA_CLEARANCE = 3.5; // margin added beyond an obstacle's own radius
+// Environment clearance (see the clearance block in useFrame). Runs on the
+// PLAIN third-person chase camera every frame now (not just cinematic
+// shots) — on tight bends the chase cam swings wide toward the outside of
+// the curve, straight into trees / houses / rocks lining it, and the
+// corridor guarantee only covers the centreline. Faded out in first person
+// (the player's eyes are meant to be able to brush past a leaf).
+const CAMERA_CLEARANCE = 2.0; // margin added beyond an obstacle's own radius
+const CAMERA_CLEARANCE_CINE = 3.5; // wider margin while a cinematic shot is driving
 const MAX_CLEARANCE_PUSH = 16; // cap on the total per-frame correction, world units
-const MIN_GROUND_CLEARANCE = 2.5; // keep a cinematic shot above the local route surface
-const CLEARANCE_EASE_RATE = 6; // how fast the applied correction eases in/out (no snap)
+const MIN_GROUND_CLEARANCE = 2.5; // keep the camera above the local route surface
+const CLEARANCE_EASE_RATE = 7; // how fast the applied correction eases in/out (no snap)
 
 // Phase 6 Stage 3: the sequence's pre-drop hold now spans two phases
 // ('buildup' then 'tension') instead of the old single ~0.3s
@@ -397,26 +399,23 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
       seqLook = seqShotLook.current;
     }
 
-    // --- Phase 6 Stage 7: cinematic-camera environment clearance. -------
-    // Runs only while a cinematicDirector cut or the sequence shot is
-    // actually influencing the camera (`cineBlend`/`seqBlend` > 0) — the
-    // plain gameplay chase camera lives in the corridor and is left
-    // exactly as it was. For each coarse obstacle sphere the composed
-    // camera position has ended up inside, push it radially out to the
-    // sphere surface (+ margin); accumulate across obstacles, clamp the
-    // total, keep it above the local route surface, then EASE the applied
-    // correction via a persistent offset so it fades in and out instead of
-    // the camera appearing to hit an invisible wall. A small deviation
-    // from the planned shot is acceptable; a shot flying through a
-    // building is not.
-    const clearanceActive = seqBlend > 0.001 || cineBlend > 0.001;
+    // --- Environment clearance: keep the camera out of solid geometry. --
+    // Now runs on the plain chase camera every frame, not just during a
+    // cinematic shot. For each coarse obstacle sphere the composed camera
+    // position has ended up inside, push it radially out to the sphere
+    // surface (+ margin); accumulate across obstacles, clamp the total,
+    // keep it above the local route surface, then EASE the applied
+    // correction via a persistent offset so it slides rather than snapping.
+    // Faded out toward first person (`1 - modeBlend`) — those are the
+    // player's eyes and are meant to be able to clip a leaf.
+    const clearMargin = cineBlend > 0.001 || seqBlend > 0.001 ? CAMERA_CLEARANCE_CINE : CAMERA_CLEARANCE;
     clearanceTarget.current.set(0, 0, 0);
-    if (clearanceActive && world.cameraObstacles && world.cameraObstacles.length > 0) {
+    if (world.cameraObstacles && world.cameraObstacles.length > 0 && modeBlend.current < 0.98) {
       for (const o of world.cameraObstacles) {
         const dx = position.x - o.position.x;
         const dy = position.y - o.position.y;
         const dz = position.z - o.position.z;
-        const minD = o.radius + CAMERA_CLEARANCE;
+        const minD = o.radius + clearMargin;
         const dSq = dx * dx + dy * dy + dz * dz;
         if (dSq >= minD * minD) continue;
         if (dSq > 1e-4) {
@@ -436,6 +435,7 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
       if (projectedY < groundFloor) clearanceTarget.current.y += groundFloor - projectedY;
       const pushLen = clearanceTarget.current.length();
       if (pushLen > MAX_CLEARANCE_PUSH) clearanceTarget.current.multiplyScalar(MAX_CLEARANCE_PUSH / pushLen);
+      clearanceTarget.current.multiplyScalar(1 - modeBlend.current);
     }
     clearanceOffset.current.lerp(clearanceTarget.current, 1 - Math.exp(-dt * CLEARANCE_EASE_RATE));
     position.add(clearanceOffset.current);

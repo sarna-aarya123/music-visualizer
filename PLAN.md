@@ -1786,3 +1786,233 @@ Protected files (`FeatureExtractor`, `beatConsumer`, `AudioEngine`,
   per-world visuals, idle camera, and seeked-in single frames DO work.
   Mechanism-level checks are done headlessly (esbuild-bundle the real
   modules, run under Node).
+
+### Camera pass 5 + geometry/orientation/clipping sweep + dark-world lift (2026-08-30)
+
+User re-ran every level and asked for four things: (1) cinematics either
+follow the character OR cut to a composed shot of a *cool* environment
+feature — no more "camera drifting around the character showing nothing";
+(2) fix mis-oriented props; (3) fix Desert Dream's "runs through a pile of
+sand" for good; (4) audit every world for character/camera clipping. Plus
+opted into the deferred polish (dark worlds, near-black character).
+
+**Cinematics — "hero shot or nothing" (`cameraShots.ts`, `cinematicDirector.ts`).**
+- `cinematicDirector.ts`: `CINEMATIC_CUTS_ENABLED = false`. The quick
+  character-only cut (`dramaticClose`/`frontFacing`/`lowAngle`) is gone —
+  it was the "camera moved, framed nothing new" complaint. Machinery
+  intact/dormant; the event id is still consumed each frame.
+- `cameraShots.ts` is now the single cinematic. New `heroFrame` `ShotSpec`:
+  camera sits behind the character ON THE LINE from the locked landmark,
+  lifted — landmark beyond, character in the foreground, both in frame,
+  a slow settle, no orbit/sweep. `SHOT_TABLE` = `heroFrame` on
+  `drop`+`transform` only (~3.5s), then chase cam.
+- **Hard gate:** `getSequenceCameraShot` returns 0 for every phase unless a
+  landmark sits in the framing band `[MIN_TARGET_DIST 45, MAX_TARGET_DIST
+  140]` when the sequence leaves idle. No landmark → no camera move at all.
+  The old "character-anchored dynamic move" no-landmark fallback is
+  deleted (that WAS the "cinematic that shows nothing").
+- `CameraRig.tsx` untouched — its `seqBlend` compose + Stage-7 obstacle
+  clearance already apply/protect the shot.
+- Headless (`cinematics-check.mjs`): landmark 80u in band → blend eases
+  0→1 over drop, holds transform, 0 by reveal; camera behind the char on
+  the far side from the landmark (dot 0.8), char in view cone (0.9). No
+  landmark / 200u / 20u → blend 0 every phase.
+
+**Object orientation (`definitions.ts`, `Walkway.tsx`).**
+- **Desert arches**: were a `torusThick` yawed at random with a no-op
+  `Rz(π/2)` and squashed to `rad*0.4` deep — half the time the ring
+  pointed its hole down the path and reached its full radius sideways onto
+  the deck. Now yawed to `tangent + 90°` (broadside monument you run past),
+  `ownRadius`/`extra` bumped, depth `rad*0.5`.
+- **Abyss whales**: yaw biased to the route heading ±40° (was fully
+  random → some nose-diving broadside across the canyon).
+- **Carnival ferris wheels**: yaw `tangent + 90°` so the wheel presents its
+  full round face across the path (was `tangent` → edge-on, a vertical bar,
+  right when closest). Spokes + rim bulbs all rebased on the same
+  `wheelYaw` so the assembly turns together.
+- **Void portal rings**: were `Rx(π/2)` (laid flat, tube at head height
+  across the path). Now vertical (`[±0.1, tangentYaw, 0]`) and lifted
+  `rad*0.3` — the hole surrounds the walkway, solid tube a full `rad` away.
+- **Outer rings**: `ownRadius = rad` (full) so `flank` keeps the whole hoop
+  clear — a 56u ring offset ~46u used to overhang the deck with its lower
+  edge at running height. Count 7→6, rad cap 56→46.
+- **FI walkway railings**: first tried `POST_EVERY` 6→4 + `RAIL_OUT` 0.22;
+  the user still saw them glitch, so a later pass **removed the railings
+  entirely** — `Walkway.tsx` is now just the deck ribbon (all post/rail
+  instancing, `woodMaterial`, and the `ToonSurfaceMaterial` import gone).
+
+**Desert "pile of sand" (`buildDesert` largely reworked).**
+- Root cause: near dunes are ellipses up to `r*1.25` on the long axis but
+  `flank`'s self-clear guard modelled them as circles of radius `r`, so the
+  long face landed on the deck; and they were sunk only ~1u so a graze read
+  as a lump in the road.
+- Every stretched desert prop now passes its TRUE half-extent as
+  `flank`'s `ownRadius`. Near dunes kept near-round (`z` 1.05x not 1.25x),
+  `extra` floor 4u, sunk `0.5r` (crest just below deck). Big dunes sunk
+  `0.54r` (crest ~0.1r below deck), far ridge capped `r ≤ 68` (a bigger
+  dune wraps the loop) and mostly buried.
+- New `sand` prop group: 80 wide flat tiles following the route's
+  height/heading just under the deck — a continuous desert floor, so
+  nothing reads as an isolated lump and the mid-stretches aren't a void.
+- New **full-loop fold guard in `flank`**: the ±3% local scan only sees a
+  hairpin one anchor away; a jittered route also folds back on itself over
+  a bigger arc, and a big prop `extra`-clear of one stretch could sit on
+  the other (the character ran through a mesa on the far side of a fold).
+  The guard scans the whole loop (cached 384-sample polyline), skips
+  samples the prop can't reach vertically, and pushes the prop off the
+  worst offender iteratively (radial-outward last resort if boxed in).
+- Floating pyramids now genuinely FLOAT (near-pyramid `lift` raised so the
+  base clears the route by a wide margin even under a fold).
+
+**Dark-world + character brightness (opted-in polish).**
+- Abyss/Forest/Carnival: `sky.exposure` +0.08–0.1, `fog.near` pulled out
+  ~15u, `fog.color` and path `colorB` lifted a step, darkest prop
+  `color`/`shadow` values (columns/blocks, trunks/canopies, spokes/booths/
+  tents) lifted.
+- `characterAppearance.ts`: Cyberpunk (`#1e1e34`→`#38395c`), Void
+  (`#12121a`→`#2a2a3e`, skin off pure-black too), Abyss, Forest outfits
+  lifted a step keeping each hue identity.
+- `Character.tsx` `makeToonPart`: shade term `mix 0.6→0.55`, floor
+  `*0.6→*0.68` — the figure's shadow side no longer crushes to black.
+
+**Verification.** `tsc -b` + `npm run build` clean. Headless
+`clearance-check.mjs` (real transformed-vertex AABBs vs the route
+centreline, character body band): **0 intruding instances across all 9
+worlds** (excl. Desert's `sand` floor and Void's by-design portal rings),
+down from 51 on the first pass. World build time ~29ms worst (Desert).
+Visual spot-checks at the preview's fixed pane: Desert ground strip +
+clean path confirmed, Carnival wheel now reads as a wheel, Void/Abyss/
+Forest character readable. Full-motion + real-drop hero-cut framing +
+final brightness levels need the user's eyes with real audio.
+
+### Camera pass 6 + Desert Dream rebuild + effect-glow bump (2026-08-30, later)
+
+User, from school, terse: (1) the camera still passes through solid things
+(trees, houses); (2) Desert Dream STILL reads as "running through sand" and
+"looks the same every time" — fix it hard or delete it; (3) more glow on
+each map *when there's an effect*, not just overall brightness.
+
+**Camera collision on the plain chase cam (`CameraRig.tsx`).**
+- The Stage-7 environment-clearance block (push the camera out of coarse
+  obstacle spheres, eased) now runs **every frame on the chase camera**,
+  not only during a cinematic shot. Faded out toward first person
+  (`* (1 - modeBlend)`). Margin `CAMERA_CLEARANCE` 2.0 for the chase cam,
+  3.5 while a cinematic drives. Reason: on a tight bend the chase cam
+  swings wide toward the outside of the curve, straight into the trees /
+  houses lining it — and the corridor guarantee only covers the centreline.
+- `obstacleKeys` widened per world so trees/houses/etc. actually register:
+  Desert += `rocks`, Abyss += `blocks`, Outer += `rocks`, PS2 += `roofs`,
+  Carnival += `booths`. FI `worldGenerator.ts` now adds a sphere per sakura
+  canopy (the closest thing to its walkway).
+
+**Desert Dream — rebuilt again, decisively.**
+- **No dunes anywhere near the path.** Dunes are a distant backdrop only
+  (nearest ≥110u out, sunk to the crest). The near-field is nothing but
+  slender vertical props — standing stones, saguaro, palms, weathered
+  rocks, rib arches — each with a **≥5u strip of flat sand between it and
+  the deck edge** (`extra` floor ≥5 with `baseHalf` 5.2). Mesas moved to a
+  30-90u mid-ground band.
+- **Path vs ground now high-contrast**: the `sand` floor is pale and
+  desaturated (`#dcc6a4`), the path is dark reddish clay
+  (`#8a4630`/`#4a2418`). The whole "running through sand" read was the path
+  and the ground being the same tone — you couldn't see the walkway.
+- **New look**: twilight — deep violet zenith with early **stars**
+  (`bandMode 3`), an ember horizon, a low fat sun. A clean break from the
+  flat orange midday it kept reverting to.
+- More/bigger/closer floating pyramids so it's unmistakably "the pyramid
+  desert"; pyramids float higher (base always well clear of the route).
+- Headless `clearance-check.mjs` re-run with the character radius widened
+  to **1.1** (a safety margin over the real ~0.5): **0 intruding
+  instances across all 9 worlds**. Visually confirmed: the dark path now
+  reads clearly against the pale sand, twilight sky is distinct, nothing on
+  the deck.
+
+**Effect glow bumped (all worlds).**
+- `WorldScene` event emissive clamp 1.1→1.45, total 1.7→2.0, rim boost
+  `env*0.5`→`env*0.7`. `Islands.tsx` (FI) matched.
+- `VisualizerCanvas` bloom event term `env*2.0`→`env*2.5`, clamp 2.9→3.3,
+  `luminanceThreshold` rise `env*0.1`→`env*0.08` (a touch more mid-tone
+  bloom allowed at peak).
+- `ProceduralSky` event white-mix `0.16`→`0.22` (clamp 0.24).
+- All still bounded well short of the Stage-7 white-out; a drop now reads
+  as the world *flaring*, not just lifting.
+
+`tsc -b` + `build` clean. Both headless checks pass. Not verified: the
+chase-cam collision easing in real motion on a tree-lined bend, and the
+final glow levels on a real drop.
+
+### Flat route for Desert Dream (2026-08-30, later still)
+
+User: "character still clips mainly on desert dream — just flatten the
+terrain." Done, opt-in per world:
+- `routeGenerator.ts`: `generateRoute(seed, opts?: { flat?: boolean })`.
+  When `flat`, every anchor is forced to `FLAT_ROUTE_HEIGHT = 6` — but
+  every `rng` draw still happens, so the horizontal layout is
+  byte-identical to the non-flat route for the same seed (the desert the
+  user approved is unchanged in plan, only levelled).
+- `WorldDefinition.flatRoute?: boolean` (`worlds/types.ts`), set `true` on
+  `desertDreamWorld`, threaded through `WorldScene.tsx`'s `generateRoute`
+  call. The other 8 worlds' route generation is untouched.
+- Desert `sand` floor tiles sunk to `-1.1` (top ~0.4u below the deck).
+- Headless `clearance-check.mjs` now builds each world with its
+  `flatRoute` flag and uses a **1.4u** character radius (≈3× the real
+  ~0.5): **0 intruding instances across all 9 worlds**. On the flat desert
+  route, `dunes` no longer vertically overlap the character band at all.
+- Visually confirmed: flat horizon, dark clay path clearly distinct from
+  the pale sand, camera stable (the old "camera drifts high" was partly
+  elevation-driven).
+
+### FI bridge railings removed + character locomotion pass (2026-08-30)
+
+- **Floating Islands** — the walkway edge railings are gone (`Walkway.tsx`).
+  As straight instanced segments they chorded the curved route and cut
+  across the deck on bends ("kind of glitch"); denser posts + an outward
+  nudge weren't enough. The deck stands alone now. All rail geometry /
+  `woodMaterial` / the instanced-mesh `useEffect` removed.
+- **Character.tsx — less-robotic locomotion pass.** Additive/reshape only,
+  same ref hierarchy + easing discipline:
+  - **Ankle joint** (new `leftAnkleRef`/`rightAnkleRef` wrapping the feet)
+    — the foot was welded rigid to the shin (peg-leg tell). Permanent
+    slight dorsiflex + a flick through the cycle (toe-point at push-off,
+    toe-up in recovery) + a partial knee-counter.
+  - Leg drive `swingShape` given more harmonic skew (plant-then-whip, not
+    an equal-time pedal). Knee gets a small stance-phase "yield" bump so it
+    never snaps bolt-straight.
+  - Vertical bob `~0.03 → ~0.12`, gait-phased and ballistic (`pow 0.7` for
+    hang at the top), most of it on the HIPS (flight phase) with the torso
+    taking a smaller lagging share.
+  - Elbows carried **bent the whole run** (`ELBOW_RUN_FLEX`, deeper the
+    faster) with only a small pump on top — the straighten-every-cycle read
+    as a piston. Hands tucked slightly toward the centreline (`ARM_TUCK_IN`).
+  - Stride-coupled **shoulder<->pelvis counter-twist** (`TORSO_TWIST_AMP`)
+    + a small weight-shift lean over the stance leg.
+  - **Smoothed facing**: the body eases toward the route tangent instead of
+    a hard per-frame `lookAt` snap; plus a roll into turns (`TURN_LEAN`).
+  - A tiny incommensurate cadence/amplitude wobble so no two strides are
+    identical (NOT per-frame RNG).
+  - Jump: legs now tuck on the way up and **reach for the ground** on
+    descent (`landPrep`, knee straightens), the running pedal is damped in
+    the air (`airStill`), arms throw up on the launch (`armThrow`).
+  - `tsc` + build clean, runs with no console errors. Motion *feel* is the
+    user's call to make live.
+- **Character pass 2** — user feedback: pass 1 over-corrected into "loose /
+  ragdoll". Pulled everything back to a CONTROLLED athletic run:
+  POSES amplitudes cut (run strideAmp 0.82→0.6, armAmp 0.7→0.42), the
+  cadence/amplitude wobble removed (uniform loop), hip sway 0.1→0.035,
+  stride asymmetry near-zeroed, torso counter-twist 0.17→0.045, weight-
+  shift lean deleted, bob 0.12→0.055, ankle flick 0.62→0.34. Elbows now
+  HELD at a runner's angle (ramps ~near-straight walk → firm sprint) with
+  only a tiny pump — was opening/closing every stride like a piston. Arms
+  carry a small constant inward hold, no lean-driven wobble. Jump tightened
+  (compact knee-drive up, extend-for-ground on descent, run pedal stops in
+  the air, controlled arm raise — less spread). Walking is now plain (small
+  stride, tiny lean, minimal arm swing). Smoothed facing + turn-lean kept.
+  `tsc`/build clean, fresh-tab console clean (an intermediate edit briefly
+  left a dangling `TORSO_SHIFT_AMP` ref that HMR'd in and stuck in older
+  tabs' caches — not in the committed-ready source).
+
+### Still not done (Stage 8 remainder)
+
+- Continuous music-reactivity between events ("the world breathes").
+- Per-world geometry audit for finer detail.
+- User reviewing; more changes coming. **Nothing committed.**
