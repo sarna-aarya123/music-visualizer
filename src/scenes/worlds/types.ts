@@ -84,4 +84,9 @@ export interface WorldDefinition {
    *  for worlds whose geometry is all small/scattered/hollow — they just
    *  get no camera correction. */
   obstacleKeys?: string[];
+  /** Generate this world's route on a single elevation (no rises/dips).
+   *  Desert Dream uses it: its props are placed relative to the route, and
+   *  an undulating route folding back near itself at a different height is
+   *  what left the runner clipping props there. See `RouteOptions.flat`. */
+  flatRoute?: boolean;
 }

@@ -9,22 +9,20 @@ import { majorEventState } from './musicEventDirector';
  * constant camera motion. The gameplay camera (CameraRig.tsx) stays the
  * default; this only ever decides WHEN and WHICH short cut happens.
  *
- * Phase 6 Stage 8 — cinematic cuts are back ON, but deliberately small in
- * scope. ONE trigger: a major event (`majorEventState.impactEventId` — the
- * rare coordinated drop). One cut, ~3s, at least `MIN_GAP` seconds apart.
- * The shot is always one of three CHARACTER-GUARANTEED framings —
- * `dramaticClose` (tight 3/4 behind), `frontFacing` (ahead, running at
- * camera), `lowAngle` (ground level behind) — all close enough that the
- * character fills the frame and can't be occluded. The `sideTracking` and
- * `landmark` shots (which could put geometry between camera and character,
- * or lose the character off-frame) are NOT used.
+ * Phase 6 Stage 8 (fifth camera pass) — this file's cut is now OFF
+ * (`CINEMATIC_CUTS_ENABLED = false`). The project's one cinematic is the
+ * major-event *sequence* camera in `cameraShots.ts`: a composed "hero
+ * shot" of a signature landmark, fired only when there's genuinely one to
+ * frame, otherwise the plain chase cam holds. This file's quick
+ * character-only cut added camera motion that framed nothing new — the
+ * exact complaint across four prior passes — so it's disabled. Everything
+ * below still compiles and runs (the event id is still consumed every
+ * frame); `startShot` is just never reached.
  *
  * History: cuts used to fire on landmark-proximity / district-transition /
- * every drop — a cut every few seconds, pointed at the environment. That
- * was cut back to major-events-only + character shots, then briefly
- * disabled entirely while the framing was sorted out. This is the
- * deliberate re-enable: a cut that lands WITH the drop, frames the
- * protagonist, and then it's back to the chase cam.
+ * every drop — a cut every few seconds. That narrowed to major-events-only
+ * + character framings, then to this: off, with the hero-or-nothing
+ * sequence camera as the single source of a deliberate camera move.
  */
 
 export type ShotType =
@@ -52,9 +50,20 @@ export const cinematicState: CinematicState = {
   targetPosition: new THREE.Vector3(),
 };
 
-/** Master switch. `false` = no cinematic cuts at all; the camera is the
- *  plain third-person chase cam. */
-const CINEMATIC_CUTS_ENABLED = true;
+/** Master switch. `false` = no cinematic cuts from THIS file at all.
+ *
+ *  Stage 8 "hero shot or nothing": this is now `false`. The single
+ *  cinematic in the project is the major-event *sequence* camera in
+ *  `cameraShots.ts` — a composed hero shot of a signature landmark, fired
+ *  only when there's actually one to frame. This file's quick
+ *  character-only cut (`dramaticClose`/`frontFacing`/`lowAngle`) was the
+ *  "camera moved but showed nothing" the user kept reporting, so it's
+ *  disabled. `stepCinematicDirector` still runs and still consumes the
+ *  major-event id every frame (so re-enabling never has to clear a
+ *  backlog); it just never calls `startShot`, so `cinematicState.shot`
+ *  stays `'gameplay'` and `getCinematicBlend()` is always 0. All the
+ *  machinery below is intact and dormant. */
+const CINEMATIC_CUTS_ENABLED = false;
 
 /** Minimum seconds between cuts. Major events fire roughly every 13-20s+
  *  in an energetic track; this keeps a cut to at most ~once per 20s so

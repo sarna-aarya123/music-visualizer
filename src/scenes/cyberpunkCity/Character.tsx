@@ -39,7 +39,11 @@ function makeToonPart(color: string, shadowTint = '#2a1a44'): THREE.ShaderMateri
       void main() {
         float ndl = dot(normalize(vNormalW), normalize(uLightDir));
         vec3 lit = uColor * 1.15;
-        vec3 shade = mix(uColor, uShadow, 0.6) * 0.6;
+        // Shade term lifted (mix 0.6->0.55, floor 0.6->0.68): the shadow
+        // side of the figure was crushing to near-black for the darker
+        // outfits, so the character read as a flat silhouette in Cyberpunk
+        // / Void / Abyss. Still a clear two-band cel step, just not a hole.
+        vec3 shade = mix(uColor, uShadow, 0.55) * 0.68;
         vec3 col = mix(shade, lit, step(0.06, ndl));
         gl_FragColor = vec4(col, 1.0);
       }
@@ -164,8 +168,8 @@ const ANTICIPATION_CROUCH = 0.34;
 // mirror. Applied as a phase offset + slight amplitude scale on the
 // right side only, consistently, so the character has one subtle,
 // repeatable "handedness" instead of legs/arms being an exact mirror.
-const STRIDE_ASYM_PHASE = 0.12;
-const STRIDE_ASYM_AMP = 0.93;
+const STRIDE_ASYM_PHASE = 0.05;
+const STRIDE_ASYM_AMP = 0.97;
 
 // --- Phase 5 step 4: secondary-motion / de-mechanization constants -------
 // The core problem: legs, torso bob, and knees all derived from the exact
@@ -183,17 +187,9 @@ const STRIDE_ASYM_AMP = 0.93;
 // exact lockstep with the leg swing — eased at its own rate, separate from
 // the torso's lean easing below.
 const HIP_SWAY_PHASE_OFFSET = 0.55;
-const HIP_SWAY_AMOUNT = 0.1; // lateral tilt (rotation.z), scaled by strideAmp
-const HIP_TWIST_AMOUNT = 0.05; // subtle counter-twist (rotation.y), scaled by strideAmp
+const HIP_SWAY_AMOUNT = 0.035; // lateral tilt (rotation.z) — a hint, not a wiggle
+const HIP_TWIST_AMOUNT = 0.02; // subtle counter-twist (rotation.y)
 const HIP_EASE_RATE = 5.5;
-
-// Shoulders: no separate shoulder geometry exists, so the counter-rotation
-// is applied directly as an additive term on both arm groups' rotation.x —
-// a fraction of the torso's OWN (already-eased) lean, chased with its own
-// slower ease rate so it visibly trails the torso instead of moving with
-// it frame-for-frame.
-const SHOULDER_COUNTER_FACTOR = 0.4;
-const SHOULDER_EASE_RATE = 5;
 
 // Head: partially resists (rather than perfectly inheriting) the torso's
 // rotation — a fraction of the torso's lean, inverted, eased slower still
@@ -208,6 +204,38 @@ const HEAD_EASE_RATE = 3.2;
 // squash, so the body settles in stages rather than every part resuming
 // the run pose on the same frame.
 const LANDING_SETTLE_DECAY = 3.5;
+
+// --- Locomotion tuning (2026-08-30, pass 2) ----------------------------
+// Feedback: the earlier de-mechanization pass over-corrected into "loose /
+// ragdoll" — too much secondary sway, wobble and splay. This pass pulls
+// everything back to a CONTROLLED athletic run: a solid forward lean, arms
+// locked at a runner's elbow angle driving in a tight fore-aft arc, legs
+// on a clean cycle, only a restrained vertical rise, and near-zero torso
+// twist. Walking is deliberately plain. The one genuinely-missing joint
+// (the ankle) stays, but subtle.
+const ANKLE_BASE_DORSI = 0.1;    // slight toe-up so the foot isn't a peg
+const ANKLE_FLICK_AMP = 0.34;    // restrained heel-lift / toe-down through the cycle
+const ANKLE_KNEE_COUNTER = 0.3;  // partly cancel the knee so the sole doesn't fold flat under
+const ANKLE_PHASE = 1.7;
+const BOB_AMP = 0.055;           // a controlled runner barely bounces (was 0.12)
+const BOB_PHASE = 0.7;
+const KNEE_YIELD_AMP = 0.16;     // a small stance give, not a floppy second bend
+// Elbow angle a runner HOLDS — nearly constant, ~85-100°, only a hair more
+// bent at sprint. The tiny per-cycle pump on top is deliberately small.
+const ELBOW_RUN_FLEX_MIN = 0.9;
+const ELBOW_RUN_FLEX_MAX = 1.5;
+const ELBOW_PUMP = 0.16;         // how much the held elbow angle varies per stride
+const ARM_HOLD_IN = 0.1;         // arms carried a touch in toward the ribs, CONSTANT (not per-cycle)
+const TORSO_TWIST_AMP = 0.045;   // a hint of shoulder/pelvis separation, no more
+const FACING_EASE_RATE = 10;     // ease the body yaw toward the route heading (was an instant snap)
+const TURN_LEAN = 0.55;          // a controlled lean into a curve
+
+/** Smooth (C1-continuous) half-wave pulse. */
+const bendPulse = (x: number) => Math.pow(Math.max(0, Math.sin(x)), 1.7);
+/** Leg-swing drive — a mild harmonic skew so the leg sweeps back at a
+ *  steadier rate (planted) then recovers a little quicker, without the
+ *  exaggerated whip the previous shape had. */
+const swingShape = (p: number) => Math.sin(p) + 0.14 * Math.sin(2 * p - 0.6);
 
 type MoveState = 'idle' | 'walk' | 'run' | 'sprint';
 type JumpPhase = 'none' | 'anticipation' | 'air' | 'glide' | 'land';
@@ -225,12 +253,14 @@ interface Pose {
 }
 
 const POSES: Record<MoveState, Pose> = {
-  idle: { strideFreq: 0, strideAmp: 0, armAmp: 0, lean: 0.02, crouch: 0, breathe: 1 },
-  walk: { strideFreq: 2.2, strideAmp: 0.35, armAmp: 0.28, lean: 0.05, crouch: 0, breathe: 0 },
-  // Run/sprint lean and arm-swing pushed further than before — a punchier,
-  // more exaggerated "anime run" read rather than a jog.
-  run: { strideFreq: 4.0, strideAmp: 0.82, armAmp: 0.7, lean: 0.2, crouch: 0.02, breathe: 0 },
-  sprint: { strideFreq: 6.4, strideAmp: 1.12, armAmp: 1.05, lean: 0.42, crouch: 0.09, breathe: 0 },
+  idle: { strideFreq: 0, strideAmp: 0, armAmp: 0, lean: 0.015, crouch: 0, breathe: 1 },
+  // Plain walk: a modest stride, a small arm swing, barely any lean.
+  walk: { strideFreq: 2.1, strideAmp: 0.3, armAmp: 0.22, lean: 0.04, crouch: 0, breathe: 0 },
+  // Controlled run: a clear forward lean, a contained scissor (not a wild
+  // splay), arms driving in a tight arc (armAmp < strideAmp so they don't
+  // out-swing the legs).
+  run: { strideFreq: 4.2, strideAmp: 0.6, armAmp: 0.42, lean: 0.24, crouch: 0.02, breathe: 0 },
+  sprint: { strideFreq: 6.4, strideAmp: 0.86, armAmp: 0.62, lean: 0.46, crouch: 0.08, breathe: 0 },
 };
 
 // Phase 5 step 3: rethresholded against the new 10-34 cruise range from
@@ -325,6 +355,8 @@ export function Character({
   const rightArmRef = useRef<THREE.Group>(null!);
   const leftElbowRef = useRef<THREE.Group>(null!);
   const rightElbowRef = useRef<THREE.Group>(null!);
+  const leftAnkleRef = useRef<THREE.Group>(null!);
+  const rightAnkleRef = useRef<THREE.Group>(null!);
 
   const stridePhase = useRef(0);
   const compression = useRef(0);
@@ -365,8 +397,14 @@ export function Character({
   // visibly cascades instead of moving in lockstep.
   const hipSwayDisplay = useRef(0);
   const hipTwistDisplay = useRef(0);
-  const shoulderCounter = useRef(0);
   const headStabilize = useRef(0);
+  // Less-robotic pass: smoothed body facing (eased toward the route
+  // tangent, not snapped), the roll into a turn, and the stride-coupled
+  // shoulder counter-twist / weight shift — each eased on its own.
+  const smoothedFwd = useRef<THREE.Vector3 | null>(null);
+  const prevFwd = useRef(new THREE.Vector3(0, 0, 1));
+  const turnLean = useRef(0);
+  const torsoTwist = useRef(0);
   // Spikes to 1 the instant a landing occurs, decays independently of
   // `compression` (see LANDING_SETTLE_DECAY) — drives a small extra knee
   // bend/hip dip that lingers slightly longer than the torso's own squash.
@@ -491,7 +529,18 @@ export function Character({
 
     groupRef.current.position.copy(m.position).addScaledVector(m.up, jumpOffsetY.current);
     groupRef.current.up.copy(m.up);
-    groupRef.current.lookAt(m.position.clone().add(m.tangent));
+    // Smoothed facing: ease the body's forward direction toward the route
+    // tangent instead of hard-snapping to it every frame — on a curve the
+    // instant lookAt made the whole figure twitch with the spline.
+    if (!smoothedFwd.current) smoothedFwd.current = m.tangent.clone();
+    const fwd = smoothedFwd.current;
+    prevFwd.current.copy(fwd);
+    fwd.lerp(m.tangent, 1 - Math.exp(-dt * FACING_EASE_RATE)).normalize();
+    groupRef.current.lookAt(groupRef.current.position.clone().add(fwd));
+    // Roll into a turn: signed rate the facing is rotating about `up`.
+    const turnRate = prevFwd.current.clone().cross(fwd).dot(m.up) / Math.max(dt, 1e-4);
+    turnLean.current +=
+      (THREE.MathUtils.clamp(-turnRate * TURN_LEAN, -0.28, 0.28) - turnLean.current) * (1 - Math.exp(-dt * 5));
 
     // Anticipation crouch: eases IN over the anticipation window (not an
     // instant target-swap) so "the music built up, then the character
@@ -555,20 +604,20 @@ export function Character({
     pose.current.crouch += (target.crouch - pose.current.crouch) * poseRate;
     pose.current.breathe += (target.breathe - pose.current.breathe) * poseRate;
 
+    const et = state.clock.elapsedTime;
+    // Uniform cadence — a controlled run is a consistent loop. (The earlier
+    // "no two strides identical" wobble read as unsteady.)
     stridePhase.current += dt * pose.current.strideFreq;
-    // A small second-harmonic term breaks the perfect front/back symmetry
-    // of a pure sine — real gait spends less time in the fast recovery
-    // swing than in the slower stance/push-off, and a bare sine (equal
-    // time both ways) is a big part of what reads as "robotic" rather than
-    // human. Still perfectly smooth (a sum of sines), just less mechanical.
-    // On top of that, the left and right sides now run on a slightly
-    // different phase/amplitude (STRIDE_ASYM_PHASE/AMP, both fixed
-    // constants — a consistent "handedness", not per-frame randomness),
-    // since legs/arms being an EXACT mirror was itself a large part of the
-    // "mechanically symmetrical" read.
+
+    // Continuous "how much is the gait engaged" ramp — gates the whole
+    // locomotion layer so nothing pops on/off at the start/stop of movement.
+    const kneeEnabled = THREE.MathUtils.clamp(pose.current.strideAmp / 0.22, 0, 1);
+
+    // Left/right run on a barely-different phase so the figure isn't a
+    // perfect mirror, but close to uniform. `swingShape` has only a mild
+    // harmonic skew now (plant a little longer than the recovery).
     const phaseL = stridePhase.current;
     const phaseR = stridePhase.current + STRIDE_ASYM_PHASE;
-    const swingShape = (p: number) => Math.sin(p) + 0.18 * Math.sin(p * 2 - 0.6);
     const swingL = swingShape(phaseL) * pose.current.strideAmp;
     const swingR = swingShape(phaseR) * pose.current.strideAmp * STRIDE_ASYM_AMP;
     // Idle sway also picks up with drum presence — the character shouldn't
@@ -599,19 +648,18 @@ export function Character({
     hipSwayDisplay.current += (hipSwayTarget - hipSwayDisplay.current) * (1 - Math.exp(-dt * HIP_EASE_RATE));
     hipTwistDisplay.current += (hipTwistTarget - hipTwistDisplay.current) * (1 - Math.exp(-dt * HIP_EASE_RATE));
 
-    // --- Shoulders: no separate geometry, so applied as an additive
-    // counter-rotation on both arm groups below — a fraction of the
-    // torso's OWN lean, chased at a slower rate so it visibly trails
-    // rather than moving in the same instant as the torso does.
-    const shoulderCounterTarget = -leanDisplay.current * SHOULDER_COUNTER_FACTOR;
-    shoulderCounter.current += (shoulderCounterTarget - shoulderCounter.current) * (1 - Math.exp(-dt * SHOULDER_EASE_RATE));
-
     // --- Head: partially resists the torso's rotation (a fraction,
     // inverted) at the slowest rate of the chain, so it reads as
     // comparatively stable rather than perfectly inheriting every torso
     // movement.
     const headStabilizeTarget = -leanDisplay.current * HEAD_STABILIZE_FACTOR;
     headStabilize.current += (headStabilizeTarget - headStabilize.current) * (1 - Math.exp(-dt * HEAD_EASE_RATE));
+
+    // --- A hint of shoulder/pelvis separation each stride — just enough
+    // that the torso isn't a rigid plank, far short of a "twist". No
+    // weight-shift lean (that read as the body lolling side to side).
+    const torsoTwistTarget = -Math.sin(hipPhase + Math.PI / 2) * pose.current.strideAmp * TORSO_TWIST_AMP;
+    torsoTwist.current += (torsoTwistTarget - torsoTwist.current) * (1 - Math.exp(-dt * 6));
 
     // Ease the "how airborne" blend toward its target instead of switching
     // instantly — removes the pop at the anticipation/air/land boundaries.
@@ -622,89 +670,107 @@ export function Character({
     const glideTarget = jumpPhase.current === 'glide' ? 1 : 0;
     glideBlend.current += (glideTarget - glideBlend.current) * (1 - Math.exp(-dt * 8));
     const glide = glideBlend.current;
-    // Legs trail during a glide (less tuck), arms open wider.
-    const airTuck = airBlend.current * 0.5 * (1 - glide * 0.6);
-    // A distinct airborne silhouette — legs/arms spread outward, not just
-    // tucked forward, so a jump reads as its own recognizable pose rather
-    // than a scaled-down run frame. The glide opens the arms further still.
-    const airSpread = airBlend.current * 0.4 + glide * 0.5;
+    // Realistic jump: on the way up the knees drive up compactly; at the
+    // apex/descent the legs extend down and slightly forward to meet the
+    // ground (`landPrep`). The run cycle stops in the air (`airStill`).
+    // Arms come up controlled on the launch, then out a little for balance.
+    const rising = THREE.MathUtils.clamp(jumpVelY.current / 6, 0, 1);
+    const falling = THREE.MathUtils.clamp(-jumpVelY.current / 6, 0, 1);
+    const airTuck = airBlend.current * (0.7 * rising + 0.08) * (1 - glide * 0.5);
+    const landPrep = airBlend.current * falling * (1 - glide);
+    const airStill = 1 - airBlend.current * 0.85;
+    // A modest airborne spread — enough that a jump isn't a frozen run
+    // frame, not so much it reads as flailing.
+    const airSpread = airBlend.current * 0.18 + glide * 0.4;
+    const armThrow = airBlend.current * (rising * 0.5 + 0.15); // arms up-ish through the jump
 
     const armRatio = pose.current.armAmp / Math.max(pose.current.strideAmp, 0.001);
     if (leftLegRef.current) {
-      leftLegRef.current.rotation.x = swingL - airTuck;
+      leftLegRef.current.rotation.x = swingL * airStill - airTuck - landPrep * 0.3;
       leftLegRef.current.rotation.z = airSpread;
     }
     if (rightLegRef.current) {
-      rightLegRef.current.rotation.x = -swingR - airTuck;
+      rightLegRef.current.rotation.x = -swingR * airStill - airTuck - landPrep * 0.3;
       rightLegRef.current.rotation.z = -airSpread;
     }
-    // Contralateral pairing (opposite arm swings with opposite leg,
-    // anatomically correct): left arm follows the right leg's swing value
-    // and vice versa — already true before asymmetry existed, preserved
-    // here by pairing each arm with the OTHER side's swing.
+    // Contralateral arm/leg pairing. The arm is a CONTROLLED unit: a
+    // compact fore-aft drive at the shoulder (armRatio < 1 so it doesn't
+    // out-swing the legs), held a touch in toward the ribs, no lean-driven
+    // wobble. The elbow is carried bent (below) and barely opens/closes.
     if (leftArmRef.current) {
-      leftArmRef.current.rotation.x = -swingR * armRatio + airTuck * 0.6 + shoulderCounter.current;
-      leftArmRef.current.rotation.z = -airSpread * 1.2;
+      leftArmRef.current.rotation.x = -swingR * armRatio + airTuck * 0.55 - armThrow;
+      leftArmRef.current.rotation.z = -airSpread * 0.8 + ARM_HOLD_IN * kneeEnabled;
     }
     if (rightArmRef.current) {
-      rightArmRef.current.rotation.x = swingL * armRatio + airTuck * 0.6 + shoulderCounter.current;
-      rightArmRef.current.rotation.z = airSpread * 1.2;
+      rightArmRef.current.rotation.x = swingL * armRatio + airTuck * 0.55 - armThrow;
+      rightArmRef.current.rotation.z = airSpread * 0.8 - ARM_HOLD_IN * kneeEnabled;
     }
 
-    // Knee bend: peaks as each leg lifts through its forward swing, eases
-    // back out near full extension. `bendPulse` is a smooth (C1-continuous)
-    // half-wave pulse — raising max(0, sin) to a power removes the sharp
-    // derivative kink a plain half-rectified sine has right at the zero
-    // crossing, which is a big part of what read as "robotic" up close.
-    // `kneeEnabled` is now a continuous ramp on strideAmp itself (already
-    // smoothly eased frame to frame) rather than a hard threshold switch,
-    // so there's no pop the instant the character starts/stops moving.
-    const bendPulse = (x: number) => Math.pow(Math.max(0, Math.sin(x)), 1.7);
-    const kneeEnabled = THREE.MathUtils.clamp(pose.current.strideAmp / 0.22, 0, 1);
-    // Each knee now tracks ITS OWN leg's phase (phaseL/phaseR) rather than
-    // a shared stridePhase, so the bend stays physically coherent with the
-    // now-asymmetric swing above instead of drifting out of sync with it.
-    const leftKneeBend = bendPulse(phaseL + 0.9) * KNEE_BEND_AMP * kneeEnabled;
-    const rightKneeBend = bendPulse(phaseR + Math.PI + 0.9) * KNEE_BEND_AMP * kneeEnabled * STRIDE_ASYM_AMP;
-    // landingSettle adds a small extra bend right at touchdown (both
-    // knees, since a two-footed jump lands on both feet together), fading
-    // on its own slower decay — see LANDING_SETTLE_DECAY — so the knees
-    // visibly "give" a little longer than the torso's own squash below.
-    if (leftKneeRef.current) leftKneeRef.current.rotation.x = leftKneeBend + airTuck * 0.8 + landingSettle.current * 0.35;
-    if (rightKneeRef.current) rightKneeRef.current.rotation.x = rightKneeBend + airTuck * 0.8 + landingSettle.current * 0.35;
+    // Knee bend: a big flexion through the recovery swing PLUS a small
+    // stance-phase "yield" (opposite phase, KNEE_YIELD_AMP) — a real knee
+    // never snaps bolt-straight and rigid the way a single pulse made it.
+    // Each knee tracks its OWN leg's phase so it stays in sync with the
+    // now-asymmetric swing.
+    const leftKneeBend =
+      (bendPulse(phaseL + 0.9) + KNEE_YIELD_AMP * bendPulse(phaseL + 0.9 + Math.PI)) * KNEE_BEND_AMP * kneeEnabled;
+    const rightKneeBend =
+      (bendPulse(phaseR + Math.PI + 0.9) + KNEE_YIELD_AMP * bendPulse(phaseR + 0.9)) *
+      KNEE_BEND_AMP * kneeEnabled * STRIDE_ASYM_AMP;
+    // Knee straightens as the character reaches for the ground on descent
+    // (`landPrep`), then the landing squash (`landingSettle`) takes over.
+    const kneeAirScale = 1 - landPrep * 0.75;
+    if (leftKneeRef.current)
+      leftKneeRef.current.rotation.x = leftKneeBend * kneeAirScale + airTuck * 0.8 + landingSettle.current * 0.35;
+    if (rightKneeRef.current)
+      rightKneeRef.current.rotation.x = rightKneeBend * kneeAirScale + airTuck * 0.8 + landingSettle.current * 0.35;
 
-    // Elbow bend, paired with the diagonally-opposite knee (arms swing
-    // opposite the same-side leg) — same smooth-pulse approximation,
-    // same phase pairing as the contralateral arm swing above.
-    const leftElbowBend = bendPulse(phaseR + Math.PI + 0.9) * ELBOW_BEND_AMP * kneeEnabled * STRIDE_ASYM_AMP;
-    const rightElbowBend = bendPulse(phaseL + 0.9) * ELBOW_BEND_AMP * kneeEnabled;
+    // Ankle: a slight permanent toe-up (never a peg) + a restrained flick
+    // through the cycle + a partial cancel of the knee so the sole doesn't
+    // fold flat under the shin.
+    const leftAnkle =
+      -ANKLE_BASE_DORSI + Math.sin(phaseL + ANKLE_PHASE) * ANKLE_FLICK_AMP * kneeEnabled - leftKneeBend * ANKLE_KNEE_COUNTER;
+    const rightAnkle =
+      -ANKLE_BASE_DORSI + Math.sin(phaseR + ANKLE_PHASE) * ANKLE_FLICK_AMP * kneeEnabled - rightKneeBend * ANKLE_KNEE_COUNTER;
+    if (leftAnkleRef.current) leftAnkleRef.current.rotation.x = leftAnkle + airTuck * 0.3;
+    if (rightAnkleRef.current) rightAnkleRef.current.rotation.x = rightAnkle + airTuck * 0.3;
+
+    // Elbow: HELD at a runner's angle (ramps from a near-straight walk to a
+    // firm ~85° at sprint) with only a small pump on top — the arm reads as
+    // a driven unit, not a piston opening and closing every stride.
+    const elbowRunFlex =
+      THREE.MathUtils.lerp(
+        ELBOW_RUN_FLEX_MIN,
+        ELBOW_RUN_FLEX_MAX,
+        THREE.MathUtils.clamp((pose.current.strideAmp - 0.28) / 0.58, 0, 1)
+      ) * kneeEnabled;
+    const leftElbowBend = elbowRunFlex + bendPulse(phaseR + Math.PI + 0.9) * ELBOW_PUMP * kneeEnabled;
+    const rightElbowBend = elbowRunFlex + bendPulse(phaseL + 0.9) * ELBOW_PUMP * kneeEnabled;
     if (leftElbowRef.current) leftElbowRef.current.rotation.x = leftElbowBend + airTuck * 0.5;
     if (rightElbowRef.current) rightElbowRef.current.rotation.x = rightElbowBend + airTuck * 0.5;
 
+    // Vertical body oscillation — two per stride, ballistic (quick
+    // compression at each midstance, a short hang near the top). Restrained
+    // (BOB_AMP): a controlled runner does not bounce. Rides mostly on the
+    // hips; the torso takes a smaller lagging share.
+    const bobUnit = Math.pow(0.5 - 0.5 * Math.cos(2 * stridePhase.current - BOB_PHASE), 0.7);
+    const bob = (bobUnit - 0.45) * BOB_AMP * kneeEnabled;
+
     if (torsoRef.current) {
-      // sin(x)^2 gives the same "bounce twice per stride" shape as
-      // abs(sin(2x)) but with zero derivative at every trough instead of a
-      // sharp V — a smooth bob instead of a slightly juddery one.
-      const bobShape = Math.sin(stridePhase.current) * Math.sin(stridePhase.current);
-      const bob = bobShape * 0.03 * kneeEnabled;
-      const breatheBob = Math.sin(state.clock.elapsedTime * 0.9) * 0.02 * pose.current.breathe;
-      // landingSettle adds a touch more sink beyond compression's own
-      // squash, on its own slower decay — one more staggered layer of the
-      // landing recovery (see LANDING_SETTLE_DECAY).
+      const breatheBob = Math.sin(et * 0.9) * 0.02 * pose.current.breathe;
       torsoRef.current.position.y =
-        SHOULDER_Y - compression.current * 0.3 - pose.current.crouch - anticipationCrouch.current - landingSettle.current * 0.04 + bob + breatheBob;
-      // leanTarget/leanDisplay now computed earlier (see above, alongside
-      // the hip/shoulder/head secondary motion that reacts to it) — just
-      // applied here. Stage 7: a small extra forward pitch during a glide
-      // (eased via glideBlend) so the hang reads as "gliding", not just
-      // "floating upright".
+        SHOULDER_Y - compression.current * 0.3 - pose.current.crouch - anticipationCrouch.current
+        - landingSettle.current * 0.04 + bob * 0.4 + breatheBob;
+      // Solid forward lean (earlier-computed) + the glide pitch.
       torsoRef.current.rotation.x = leanDisplay.current + glide * 0.28;
-      // A gentle idle look-around/weight-shift — the character keeps
-      // moving in small, deliberate ways even at a dead stop, the same
-      // "always alive" always-on-animation language the environment uses
-      // (rooftop machinery, signs, cables), rather than freezing solid.
-      torsoRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.35) * 0.05 * pose.current.breathe;
-      torsoRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 0.5 + 1.2) * 0.025 * pose.current.breathe;
+      // rotation.y: idle look-around + a hint of shoulder counter-twist.
+      // rotation.z: idle weight-shift only — the lean into a turn is
+      // applied at the HIPS (below) so the WHOLE figure banks, not just the
+      // upper body. A small extra fraction here just lets the shoulders
+      // lead the lean slightly.
+      torsoRef.current.rotation.y =
+        Math.sin(et * 0.35) * 0.05 * pose.current.breathe + torsoTwist.current;
+      torsoRef.current.rotation.z =
+        Math.sin(et * 0.5 + 1.2) * 0.025 * pose.current.breathe + turnLean.current * 0.2;
     }
 
     // --- Hips: apply the sway/twist computed earlier. Legs and torso are
@@ -715,9 +781,14 @@ export function Character({
     // level. A small landing dip (own decay, see LANDING_SETTLE_DECAY)
     // rounds out the staggered recovery.
     if (hipsRef.current) {
-      hipsRef.current.rotation.z = hipSwayDisplay.current;
+      // The turn-lean lives here: legs + torso are both children of hips,
+      // so the ENTIRE body banks into a curve as one, not just the torso.
+      hipsRef.current.rotation.z = hipSwayDisplay.current + turnLean.current;
       hipsRef.current.rotation.y = hipTwistDisplay.current;
-      hipsRef.current.position.y = -landingSettle.current * 0.05;
+      // The larger share of the vertical bob rides here (see `bob` above) —
+      // the whole mass lifts off each push-off; the legs, as children, come
+      // with it, which is the flight phase.
+      hipsRef.current.position.y = -landingSettle.current * 0.05 + bob * 0.75;
     }
 
     // --- Head: partially resists the torso's rotation (see
@@ -763,9 +834,14 @@ export function Character({
             <Outlined material={mats.pants} outline={mats.outline} position={[0, -SHIN_LENGTH / 2, 0]}>
               <boxGeometry args={[0.14, SHIN_LENGTH, 0.14]} />
             </Outlined>
-            <Outlined material={mats.shoes} outline={mats.outline} position={[0, -SHIN_LENGTH, FOOT_LENGTH * 0.3]}>
-              <boxGeometry args={[0.17, FOOT_HEIGHT * 1.6, FOOT_LENGTH]} />
-            </Outlined>
+            {/* Ankle joint — the foot was welded rigid to the shin, a
+                peg-leg tell. It flicks toe-down at push-off and toe-up in
+                recovery (see `leftAnkle` in useFrame). */}
+            <group ref={leftAnkleRef} position={[0, -SHIN_LENGTH, 0]}>
+              <Outlined material={mats.shoes} outline={mats.outline} position={[0, -FOOT_HEIGHT * 0.5, FOOT_LENGTH * 0.32]}>
+                <boxGeometry args={[0.17, FOOT_HEIGHT * 1.8, FOOT_LENGTH * 1.15]} />
+              </Outlined>
+            </group>
           </group>
         </group>
         <group ref={rightLegRef} position={[0.14, HIP_Y, 0]}>
@@ -776,9 +852,11 @@ export function Character({
             <Outlined material={mats.pants} outline={mats.outline} position={[0, -SHIN_LENGTH / 2, 0]}>
               <boxGeometry args={[0.14, SHIN_LENGTH, 0.14]} />
             </Outlined>
-            <Outlined material={mats.shoes} outline={mats.outline} position={[0, -SHIN_LENGTH, FOOT_LENGTH * 0.3]}>
-              <boxGeometry args={[0.17, FOOT_HEIGHT * 1.6, FOOT_LENGTH]} />
-            </Outlined>
+            <group ref={rightAnkleRef} position={[0, -SHIN_LENGTH, 0]}>
+              <Outlined material={mats.shoes} outline={mats.outline} position={[0, -FOOT_HEIGHT * 0.5, FOOT_LENGTH * 0.32]}>
+                <boxGeometry args={[0.17, FOOT_HEIGHT * 1.8, FOOT_LENGTH * 1.15]} />
+              </Outlined>
+            </group>
           </group>
         </group>
 

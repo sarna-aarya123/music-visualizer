@@ -120,7 +120,21 @@ function buildDistrictSequence(rng: Rng, count: number): District[] {
   return sequence;
 }
 
-export function generateRoute(seed: number): RouteData {
+const FLAT_ROUTE_HEIGHT = 6;
+
+export interface RouteOptions {
+  /** Force every anchor to the same elevation, so the whole loop is
+   *  planar. Opt-in per environment (see `WorldDefinition.flatRoute`) —
+   *  Desert Dream uses it because its props are placed relative to the
+   *  route and an undulating route folding back near itself at a DIFFERENT
+   *  elevation is what left the runner clipping props there. Every `rng`
+   *  draw below still happens (only the final Y is overridden), so the
+   *  horizontal layout is byte-identical to the non-flat route for the
+   *  same seed. */
+  flat?: boolean;
+}
+
+export function generateRoute(seed: number, opts: RouteOptions = {}): RouteData {
   const rng = createRng(seed);
   const districtSequence = buildDistrictSequence(rng, ANCHOR_COUNT);
 
@@ -137,11 +151,13 @@ export function generateRoute(seed: number): RouteData {
     const radius = BASE_RADIUS * (1 + rngRange(rng, -RADIUS_JITTER, RADIUS_JITTER));
 
     const desiredHeight = THREE.MathUtils.clamp(6 + profile.heightBias + rngRange(rng, -2, 2), 2, 30);
-    const height = THREE.MathUtils.clamp(
-      desiredHeight,
-      prevHeight - MAX_HEIGHT_DELTA_PER_ANCHOR,
-      prevHeight + MAX_HEIGHT_DELTA_PER_ANCHOR
-    );
+    const height = opts.flat
+      ? FLAT_ROUTE_HEIGHT
+      : THREE.MathUtils.clamp(
+          desiredHeight,
+          prevHeight - MAX_HEIGHT_DELTA_PER_ANCHOR,
+          prevHeight + MAX_HEIGHT_DELTA_PER_ANCHOR
+        );
     prevHeight = height;
 
     anchors.push({

@@ -55,15 +55,18 @@ export const CHARACTER_APPEARANCES: Record<string, CharacterAppearance> = {
     gearColor: '#3a2340',
     accent: '#ffd3e8',
   },
+  // Was near-black (#1e1e34 / #101018 / #0a0a10) — the protagonist read as a
+  // flat silhouette against the dark city. Lifted a clear step while
+  // keeping the cool indigo identity; the cyan accent still pops.
   cyberpunkNightWorld: {
     skin: '#e8b894',
-    hair: '#141420',
-    shirt: '#1e1e34',
-    pants: '#101018',
-    shoes: '#0a0a10',
+    hair: '#22222f',
+    shirt: '#38395c',
+    pants: '#262636',
+    shoes: '#1b1b28',
     cape: null,
     headGear: 'spikyHair',
-    gearColor: '#141420',
+    gearColor: '#22222f',
     accent: '#28e0ff',
   },
   desertDreamWorld: {
@@ -80,12 +83,12 @@ export const CHARACTER_APPEARANCES: Record<string, CharacterAppearance> = {
   fantasyForestWorld: {
     skin: '#f0c8a0',
     hair: '#4a2a20',
-    shirt: '#4a7a4a',
-    pants: '#2e4a34',
-    shoes: '#28321f',
-    cape: '#2a5a3a',
+    shirt: '#548a54',
+    pants: '#3a5a42',
+    shoes: '#36432c',
+    cape: '#357048',
     headGear: 'witchHat',
-    gearColor: '#2a2038',
+    gearColor: '#3a2f4e',
     accent: '#8affc0',
   },
   outerDimensionWorld: {
@@ -101,10 +104,10 @@ export const CHARACTER_APPEARANCES: Record<string, CharacterAppearance> = {
   },
   underwaterAbyssWorld: {
     skin: '#e0c0a0',
-    hair: '#1a2a3a',
-    shirt: '#1e5a7a',
-    pants: '#143a54',
-    shoes: '#0e2434',
+    hair: '#283c4e',
+    shirt: '#2a6a8c',
+    pants: '#1f4e70',
+    shoes: '#193a52',
     cape: null,
     headGear: 'helmet',
     gearColor: '#8fd8ff',
@@ -121,15 +124,18 @@ export const CHARACTER_APPEARANCES: Record<string, CharacterAppearance> = {
     gearColor: '#c04a5a',
     accent: null,
   },
+  // Was almost pure black (#12121a) — invisible against the void except for
+  // the outline. Lifted to a dark slate that still reads as "shadow figure"
+  // but has actual form; the magenta accent carries the identity.
   abstractVoidWorld: {
-    skin: '#1a1a24',
-    hair: '#1a1a24',
-    shirt: '#12121a',
-    pants: '#12121a',
-    shoes: '#0a0a10',
+    skin: '#3a3a4c',
+    hair: '#2c2c3c',
+    shirt: '#2a2a3e',
+    pants: '#26263a',
+    shoes: '#1e1e2c',
     cape: null,
     headGear: 'none',
-    gearColor: '#12121a',
+    gearColor: '#2a2a3e',
     accent: '#ff3fc8',
   },
   chaoticCarnivalWorld: {
