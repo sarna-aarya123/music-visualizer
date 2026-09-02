@@ -2011,8 +2011,28 @@ terrain." Done, opt-in per world:
   left a dangling `TORSO_SHIFT_AMP` ref that HMR'd in and stuck in older
   tabs' caches — not in the committed-ready source).
 
+### UI: title screen + minimal in-world HUD (2026-08-30)
+
+Replaced the always-on control panel with a two-state shell (`App.tsx`):
+- **`ui/TitleScreen.tsx`** — the opening screen. Heading "Select
+  Environment", a 3×3 grid of the 9 worlds (clicking one swaps
+  `environmentStore.activeId`, so the live scene behind the scrim changes
+  as you browse), and an "Input file" drop/browse zone. Loading a track
+  auto-plays it; an "Enter" button then dismisses the screen. `Esc` also
+  dismisses when a track is loaded. Re-openable from the HUD.
+- **`ui/MiniHud.tsx`** — the entire in-world UI: the track name, top-left
+  and small, drawn in the active world's own type + colour
+  (`ui/environmentThemes.ts` — a hand-picked accent + font per world, e.g.
+  cyan mono for Cyberpunk, gold Impact for Carnival). Under it a faint
+  transport row (play/pause, thin seek line, time, fullscreen) that only
+  reaches full opacity on hover. Click the name to reopen the title.
+- Deleted `ui/UploadPanel.tsx` + `ui/TransportControls.tsx` (fully
+  replaced). `App.css` rewritten. `V` (view mode) still bound in `App`.
+- `tsc` + build clean; verified in-browser: title → pick world (bg
+  swaps) → drop track → Enter → per-world styled filename HUD → click
+  name → back to title (audio keeps playing).
+
 ### Still not done (Stage 8 remainder)
 
 - Continuous music-reactivity between events ("the world breathes").
 - Per-world geometry audit for finer detail.
-- User reviewing; more changes coming. **Nothing committed.**

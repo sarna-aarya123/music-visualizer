@@ -1,61 +1,35 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { VisualizerCanvas } from './core/VisualizerCanvas';
-import { UploadPanel } from './ui/UploadPanel';
-import { TransportControls } from './ui/TransportControls';
+import { TitleScreen } from './ui/TitleScreen';
+import { MiniHud } from './ui/MiniHud';
 import { useViewModeStore } from './state/viewModeStore';
-import { useEnvironmentStore } from './state/environmentStore';
-import { ENVIRONMENTS } from './scenes/registry';
 import './App.css';
 
-const ENVIRONMENT_IDS = Object.keys(ENVIRONMENTS);
-
+/**
+ * Shell: the environment renders full-bleed at all times. Over it sits
+ * either the title screen (pick an environment, drop a track) or, once
+ * you've entered, a minimal top-left HUD. `V` toggles first/third person.
+ */
 export default function App() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mode = useViewModeStore((s) => s.mode);
+  const [showTitle, setShowTitle] = useState(true);
   const toggleViewMode = useViewModeStore((s) => s.toggle);
-  const activeEnvironmentId = useEnvironmentStore((s) => s.activeId);
-  const setActiveEnvironment = useEnvironmentStore((s) => s.setActive);
-
-  const cycleEnvironment = useCallback(() => {
-    const idx = ENVIRONMENT_IDS.indexOf(activeEnvironmentId);
-    const next = ENVIRONMENT_IDS[(idx + 1) % ENVIRONMENT_IDS.length];
-    setActiveEnvironment(next);
-  }, [activeEnvironmentId, setActiveEnvironment]);
-
-  const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen().catch(() => {});
-    } else {
-      document.exitFullscreen().catch(() => {});
-    }
-  }, []);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        toggleViewMode();
-      }
+      if (e.key.toLowerCase() === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey) toggleViewMode();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [toggleViewMode]);
 
   return (
-    <div ref={containerRef} className="app-root">
+    <div className="app-root">
       <VisualizerCanvas />
-      <div className="ui-overlay">
-        <UploadPanel />
-        <TransportControls />
-        <button className="fullscreen-btn" onClick={toggleFullscreen}>
-          ⛶ Fullscreen
-        </button>
-        <button className="fullscreen-btn" onClick={toggleViewMode} title="Press V to toggle">
-          {mode === 'third' ? '🚶 Third Person' : '👁 First Person'} (V)
-        </button>
-        <button className="fullscreen-btn" onClick={cycleEnvironment} title="Switch environment">
-          🌍 {ENVIRONMENTS[activeEnvironmentId]?.name ?? activeEnvironmentId}
-        </button>
-      </div>
+      {showTitle ? (
+        <TitleScreen onEnter={() => setShowTitle(false)} />
+      ) : (
+        <MiniHud onOpenTitle={() => setShowTitle(true)} />
+      )}
     </div>
   );
 }
