@@ -11,10 +11,12 @@ function fmt(t: number): string {
 }
 
 /**
- * The whole in-world UI: the track name, top-left and small, drawn in the
- * active environment's own type/colour; under it a faint transport row
- * (play-pause, a thin seek line, time, fullscreen) that only comes up to
- * full opacity on hover. Clicking the name reopens the title screen.
+ * The whole in-world UI: a "menu" button + the track name (drawn in the
+ * active environment's own type/colour) top-left, then a faint transport
+ * row (play-pause, a thin seek line, time, fullscreen) that only comes up
+ * to full opacity on hover. The menu button — and clicking the name, and
+ * Esc (handled in App) — all reopen the title screen to change the
+ * environment or load a different track.
  */
 export function MiniHud({ onOpenTitle }: { onOpenTitle: () => void }) {
   const status = useAudioStore((s) => s.status);
@@ -43,19 +45,24 @@ export function MiniHud({ onOpenTitle }: { onOpenTitle: () => void }) {
 
   return (
     <div className="mini-hud" style={{ ['--accent' as string]: theme.accent }}>
-      <button
-        className="mh-name"
-        title="Change environment / track"
-        onClick={onOpenTitle}
-        style={{
-          fontFamily: theme.font,
-          textTransform: theme.upper ? 'uppercase' : 'none',
-          letterSpacing: theme.tracking ?? 'normal',
-          fontWeight: theme.weight ?? 400,
-        }}
-      >
-        {fileName ?? '—'}
-      </button>
+      <div className="mh-top">
+        <button className="mh-menu" onClick={onOpenTitle} title="Menu — change environment / track (Esc)" aria-label="Open menu">
+          &#9776;
+        </button>
+        <button
+          className="mh-name"
+          title="Change environment / track"
+          onClick={onOpenTitle}
+          style={{
+            fontFamily: theme.font,
+            textTransform: theme.upper ? 'uppercase' : 'none',
+            letterSpacing: theme.tracking ?? 'normal',
+            fontWeight: theme.weight ?? 400,
+          }}
+        >
+          {fileName ?? '—'}
+        </button>
+      </div>
 
       <div className="mh-transport">
         <button className="mh-btn" onClick={togglePlay} disabled={!canPlay} aria-label={status === 'playing' ? 'Pause' : 'Play'}>

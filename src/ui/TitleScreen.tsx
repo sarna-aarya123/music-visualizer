@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAudioStore } from '../state/audioStore';
 import { useEnvironmentStore } from '../state/environmentStore';
 import { ENVIRONMENTS } from '../scenes/registry';
@@ -45,13 +45,7 @@ export function TitleScreen({ onEnter }: { onEnter: () => void }) {
     loadFile(file); // auto-plays; the "Enter" button then dismisses this screen
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && hasTrack) onEnter();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [hasTrack, onEnter]);
+  // Esc is handled in App (it toggles this screen either way).
 
   const err = localErr ?? storeErr;
 
