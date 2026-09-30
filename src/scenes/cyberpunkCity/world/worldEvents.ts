@@ -4,9 +4,8 @@ import type { MajorEventPhase } from './musicEventDirector';
 import { WorldDirector } from './worldDirector';
 
 /**
- * Phase 6 Stage 5 — world event archetypes: the reusable behaviors
- * `PLAN.md` §6 proposed, actually wired up. Architecture, per this stage's
- * brief:
+ * World event archetypes: reusable per-instance transform behaviors,
+ * wired up as data rather than one-off code per world. Architecture:
  *
  *   WorldDirector  -> decides WHEN (already true: it owns `sequence`,
  *                      the phase/timing every event below is keyed off)
@@ -35,12 +34,12 @@ import { WorldDirector } from './worldDirector';
  *     everyone moving in lockstep)
  *   SPIN_UP                                              -> `spinUp`
  *   SCATTER_REFORM                                       -> `scatterReform`
- *   FLYOVER — NOT wired into any world binding this stage. It would be a
+ *   FLYOVER — NOT wired into any world binding yet. It would be a
  *     translate-across variant of the same primitives applied to a single
  *     instance, but no world has an existing standalone "flying object"
- *     prop to reuse without adding new geometry (explicitly out of scope)
- *     — see PLAN.md's Stage 5 write-up for the full reasoning. The type
- *     exists for completeness/future use, not as a gap left silently.
+ *     prop to reuse without adding new geometry (deliberately out of
+ *     scope). The type exists for completeness/future use, not as a gap
+ *     left silently.
  *
  * Determinism: every evaluator is a pure function of
  * (base transform, the sequence's own phase/phaseTime, static params,
@@ -90,8 +89,9 @@ export interface EventParams {
    *  own `phaseTime` only. A SPIN_UP binding must stay within a single
    *  phase — never span two — or the angle would reset to 0 at the next
    *  phase's boundary (phaseTime itself resets there). This is the same
-   *  "never `elapsed * rate`" hazard `HANDOFF.md` flags, sidestepped by
-   *  keeping `rate` genuinely constant for the binding's one phase rather
+   *  "never `elapsed * rate`" hazard flagged elsewhere in this codebase,
+   *  sidestepped by keeping `rate` genuinely constant for the binding's
+   *  one phase rather
    *  than letting it (or the base it's integrated against) change
    *  mid-integration. */
   spinRate?: number;
@@ -257,9 +257,9 @@ function evaluateBinding(
  * them). `bindings` is this world's own data: which archetype fires
  * during which sequence phase, with what parameters — author bindings so
  * consecutive phases' `liftTo`/`liftFrom` (etc.) line up, since this
- * function does not cross-fade between bindings the way Stage 4's camera
- * shots do (props tolerate a harder cut between phases far better than
- * the camera does; see PLAN.md for why that tradeoff was made here).
+ * function does not cross-fade between bindings the way the camera shots
+ * do — props tolerate a harder cut between phases far better than the
+ * camera does, so that tradeoff was made deliberately.
  *
  * Outside an active sequence (`phase === 'idle'`) or during a phase with
  * no matching binding, every participating instance is simply copied

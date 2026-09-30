@@ -378,10 +378,9 @@ export function CameraRig({ featureFrame, route, world }: CameraRigProps) {
     // right at the drop, when cinematicDirector's own existing landmark/
     // dramatic-close shot is already framing the release. The sequence
     // shot fades back in smoothly as that cut's own blend fades out (both
-    // use eased envelopes), so control hands off without a snap — see
-    // PLAN.md for the exact timing this relies on. Also yields to
-    // first-person via `(1 - modeBlend)`, matching every other cinematic
-    // effect in this file.
+    // use eased envelopes), so control hands off without a snap. Also
+    // yields to first-person via `(1 - modeBlend)`, matching every other
+    // cinematic effect in this file.
     const seqBlendRaw = WorldDirector.getSequenceCameraShot(
       state.clock.elapsedTime,
       frame.position,

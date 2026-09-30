@@ -31,8 +31,8 @@ import { consumeDrop, consumeSpectralShift, createBeatConsumerState } from '../.
  *
  * **Known limitation (by design, not an oversight):** `dropId` fires AT
  * the detected drop, not before it — there is no offline pre-analysis of
- * the track (that's the separately-flagged, not-yet-built "Stage A" in
- * `PLAN.md`). So `buildup`/`tension` below are NOT genuine pre-drop
+ * the track (that's a separately-flagged, not-yet-built idea). So
+ * `buildup`/`tension` below are NOT genuine pre-drop
  * anticipation; they are a brief, deliberately-short POST-trigger hold
  * (same technique the old 0.3s 'anticipation' phase already used and the
  * project had already approved — see CameraRig's "Phase 4.1" comment)
@@ -128,8 +128,8 @@ export function stepMusicEventDirector(
   // Trigger conditions are byte-for-byte unchanged from before Stage 3 —
   // same sources, same thresholds, same cooldown. Only entered while idle,
   // so a sequence already in flight can never be interrupted or restarted
-  // by a second trigger (the "ignore" policy from PLAN.md §9.8) — the next
-  // trigger simply waits for this sequence to reach 'idle' again.
+  // by a second trigger (deliberate "ignore" policy) — the next trigger
+  // simply waits for this sequence to reach 'idle' again.
   if (majorEventState.phase === 'idle') {
     const dropHit = consumeDrop(frame, dropConsumer);
     const shiftHit = consumeSpectralShift(frame, shiftConsumer);

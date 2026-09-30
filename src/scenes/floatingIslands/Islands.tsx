@@ -17,8 +17,8 @@ import { ToonSurfaceMaterial, ToonOutlineMaterial } from './ToonMaterial';
  * every other world's signature events) rather than routing through
  * `createSignatureEventAnimated`/`OutlinedInstances`, because this file
  * already hand-rolls its own instanced-mesh updates (see the file-level
- * comment above and `PLAN.md`/`HANDOFF.md`'s note on why Floating Islands
- * was left off the shared `OutlinedInstances` path). Body and roof tiers
+ * comment above for why Floating Islands was left off the shared
+ * `OutlinedInstances` path). Body and roof tiers
  * get the identical lift on every phase — a roof rising without its body
  * (or vice versa) would visibly separate the two.
  */

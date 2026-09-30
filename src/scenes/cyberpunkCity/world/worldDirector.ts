@@ -13,9 +13,9 @@ import { getSequenceCameraShot, resetSequenceCameraShot } from './cameraShots';
  * Phase 6 Stage 2 established this seam; Stage 3 grew it with sequence
  * state; Stage 4 adds the camera-shot decision below.
  *
- * `PLAN.md` §3 describes a WorldDirector that owns *decisions* while
- * separate *executors* own rendering: "The director never draws
- * anything." Right now there is exactly one decision system in this
+ * WorldDirector owns *decisions* while separate *executors* own
+ * rendering — the director never draws anything. Right now there is
+ * exactly one decision system in this
  * codebase — the major-event sequence in `musicEventDirector.ts` (Stage 3
  * turned its old ~2.57s flash into a real 10-15s multi-phase sequence —
  * see that file's doc comment) — so `step`/`reset` still just delegate to
@@ -38,8 +38,8 @@ import { getSequenceCameraShot, resetSequenceCameraShot } from './cameraShots';
  *  - Cinematic shot *selection* (`cinematicDirector.ts`) and speed-section
  *    decisions (`musicController.ts`'s drop/breakdown hold-and-relax) are
  *    still not wrapped here — only the one narrow read (`sequence.phase`)
- *    that Stage 3 actually needed. Folding the rest in would be premature;
- *    see PLAN.md §3's eventual scope for what that would look like.
+ *    that Stage 3 actually needed. Folding the rest in would be premature
+ *    until a second decision producer actually needs it.
  *  - The ~18 files that only need the smoothed envelope (world props, sky,
  *    post-processing) still import `getMajorEventEnvelope()` directly from
  *    `musicEventDirector.ts`, unchanged from Stage 2 — they never needed

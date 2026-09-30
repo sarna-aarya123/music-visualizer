@@ -852,9 +852,8 @@ function buildForest(route: RouteData<string>, seed: number): BuiltWorld {
   }
 
   // Giant mushroom caps bloom open in a SWEEP across the whole group, a
-  // synced pulse right at the drop, then settle — "giant mushrooms bloom
-  // in a sweep" per PLAN.md's own Fantasy Forest table. Each phase's
-  // scale/lift starts exactly where the previous one ended.
+  // synced pulse right at the drop, then settle. Each phase's scale/lift
+  // starts exactly where the previous one ended.
   const capBindings: EventBinding[] = [
     { phase: 'tension', archetype: 'SWEEP', params: { scaleFrom: 0.15, scaleTo: 1.0, liftFrom: -2, liftTo: 0, stagger: 0.75 } },
     { phase: 'drop', archetype: 'BLOOM', params: { scaleFrom: 1.0, scaleTo: 1.25, liftFrom: 0, liftTo: 0.6 } },
