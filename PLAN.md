@@ -690,7 +690,7 @@ Summary:
   prop's true size, leaving near faces on the corridor edge — each given
   its real radius + a slightly larger base margin (a sixth, forest
   crystals, was tried and reverted in the §11.5 verification pass — see
-  §11.6). Headless before/after vs `1e38320` confirms these **improve**
+  §11.6). Headless before/after vs `a8f93e1` confirms these **improve**
   every targeted group with **no new intrusion**. Abstract Void's
   `SCATTER_REFORM` (`scatterRadius: 14` on cyan solids based as little as
   4 units past the corridor edge) was the one genuine event-driven
@@ -1309,7 +1309,7 @@ real gaps:
    (`+h*0.5`), outer `shards` (`+h*0.22`), PS2 trunk-`canopies` (trunk
    ownRadius `2.8 → 3.6` to cover the wider canopy above it), desert
    `cacti` (`0.6 → 1.3` for the saguaro arms). Fantasy Forest `crystals`
-   was also changed in `46c373c` but **reverted** in the verification
+   was also changed in `ab32aad` but **reverted** in the verification
    pass — the tweak nudged one hairpin-inside crystal marginally worse,
    and crystals are too small (footprint ≤1.5) for `ownRadius` to matter
    (§11.5/§11.6). RNG call order/count in each expression is unchanged, so
@@ -1367,7 +1367,7 @@ moments so it stays special.
 
 ### 11.5 Verification
 
-**Two passes.** The first (commit `46c373c`, 2026-08-28) got `tsc`/`build`
+**Two passes.** The first (commit `ab32aad`, 2026-08-28) got `tsc`/`build`
 clean, a 9-world mount/unmount sweep, and a full synthetic-track
 playthrough (all zero-error) but **could not verify anything visual** —
 the browser preview pane never composited frames. The second pass
@@ -1377,7 +1377,7 @@ per-frame loop is fully paused, not just throttled), so instead did a
 **headless numerical verification** of the geometry- and math-dependent
 fixes by bundling the actual world/route/obstacle code with `esbuild` and
 running it under Node, plus a before/after diff against the pre-Stage-7
-commit `1e38320`.
+commit `a8f93e1`.
 
 **Static / error checks (both passes):**
 - `npx tsc -b` clean, `npm run build` clean (738 modules).
@@ -1403,7 +1403,7 @@ commit `1e38320`.
   the 16-u clamp; (e) with no obstacle a large residual offset decays to
   0.0000 within 2 s (no stuck correction when a shot ends); (f) the
   ground-floor term lifts a sub-surface shot to `routeY + 2.5`.
-- **Fix 3 (character/prop) — before/after vs `1e38320`.** Measured, per
+- **Fix 3 (character/prop) — before/after vs `a8f93e1`.** Measured, per
   world, every ground-level prop group's minimum near-face gap to the
   character's centreline path (dense route sampling, char-height overlap
   filter). Stage 7's `flank()` clearance changes **improved** every group
@@ -1411,7 +1411,7 @@ commit `1e38320`.
   Desert cacti 7.6→8.1 — and left the rest ≥8 u clear. **Zero new
   intrusions.** This pass **found and fixed one regression the first pass
   introduced**: Fantasy Forest `crystals` had been given `ownRadius`+bumped
-  `extra` in `46c373c`, which pushed one hairpin-inside crystal from a
+  `extra` in `ab32aad`, which pushed one hairpin-inside crystal from a
   −0.19 u graze to −0.66 u (worse, because pushing an inside-of-bend prop
   *outward* moves it toward the arc that curves back). Reverted that one
   line to the pre-Stage-7 form (bit-identical to Stages 5/6); all other
@@ -1671,14 +1671,14 @@ maps are still too bright, and the character still clips solids. This pass:
   (`6 + rng()*8`, was `3 + rng()*7`); sakura clustered toward island
   centre (`0.12-0.6` of the radius, was `0.25-0.85`) so rim trees no
   longer reach the walkway.
-- **Headless before/after vs `b7ee9c7`** (bundled the real builders, run
+- **Headless before/after vs `4363973`** (bundled the real builders, run
   under Node): every group the metric flagged as a real intrusion (near-
   face > 0.4u past the centreline) is fixed — Forest crystals −0.19→+3.5,
   stems −0.2→+2.4, trunks −0.25→+6.9; Void cyan −1.85→+5.2, magenta
   −1.7→+5.6; PS2 houses +0.3→+6.6; Floating Islands sakura canopy
   −2.85→+9.5. No regressions on any previously-clear group. One residual:
   Void `gold` (one small tetrahedron) still −0.74 — unchanged from
-  `b7ee9c7`, not a regression, in the most abstract "solids in black
+  `4363973`, not a regression, in the most abstract "solids in black
   space" world; the guard's narrow window can't reach the arc it grazes
   without over-correcting others. World build time ~7ms/world (measured).
 

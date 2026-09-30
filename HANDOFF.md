@@ -465,9 +465,9 @@ state (2026-08-28): Stages 0-6 done and committed —
   intensity. See `PLAN.md` §11 for the full write-up and verification.
   **A 2026-08-29 verification/polish follow-up** (the browser preview
   still can't composite frames, so verification was headless-numerical:
-  camera-clearance push math, before/after prop-clearance vs `1e38320`,
+  camera-clearance push math, before/after prop-clearance vs `a8f93e1`,
   glide state machine — all pass) reverted one thing: the Fantasy Forest
-  `crystals` `flank()` tweak in `46c373c` had nudged one hairpin-inside
+  `crystals` `flank()` tweak in `ab32aad` had nudged one hairpin-inside
   crystal marginally worse, so it's back to the pre-Stage-7 placement.
   Visual *appearance* of all four fixes remains unverified — see
   `PLAN.md` §11.5/§11.6.
